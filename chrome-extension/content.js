@@ -53,29 +53,45 @@
 
   // ── Trie-like prefix search on sorted array ────────────────────
   function searchPrefix(prefix) {
-    if (!prefix) return [];
-    const pfx = prefix.join("");
-    const results = [];
+      if (!prefix) return [];
 
-    // Binary search for first entry >= prefix
-    let lo = 0, hi = allRecords.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (allRecords[mid][0] < pfx) lo = mid + 1;
-      else hi = mid;
+      // Check if prefix contains any wildcard (6)
+      const hasWildcard = prefix.includes(6);
+
+      if (!hasWildcard) {
+        // Fast path: simple string prefix match
+        const pfx = prefix.join("");
+        const results = [];
+        let lo = 0, hi = allRecords.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (allRecords[mid][0] < pfx) lo = mid + 1;
+          else hi = mid;
+        }
+        for (let i = lo; i < allRecords.length; i++) {
+          const seq = allRecords[i][0];
+          if (!seq.startsWith(pfx)) break;
+          results.push(allRecords[i]);
+        }
+        results.sort((a, b) => b[2] - a[2]);
+        return results;
+      }
+
+      // Slow path: wildcard-aware matching
+      // Build a regex where 6 matches any digit 1-5
+      const pattern = "^" + prefix.map(s => s === 6 ? "[1-5]" : String(s)).join("");
+      const re = new RegExp(pattern);
+      const results = [];
+      for (let i = 0; i < allRecords.length; i++) {
+        if (re.test(allRecords[i][0])) {
+          results.push(allRecords[i]);
+        }
+      }
+      results.sort((a, b) => b[2] - a[2]);
+      return results;
     }
 
-    // Collect all entries that start with prefix
-    for (let i = lo; i < allRecords.length; i++) {
-      const seq = allRecords[i][0];
-      if (!seq.startsWith(pfx)) break;
-      results.push(allRecords[i]);
-    }
 
-    // Sort by frequency descending
-    results.sort((a, b) => b[2] - a[2]);
-    return results;
-  }
 
   // ── UI Creation ────────────────────────────────────────────────
   let overlay = null;
