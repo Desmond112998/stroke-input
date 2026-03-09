@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stroke-input"
+version = "0.1.0"
+description = "筆畫輸入法 (Stroke Input Method) — engine and data tools"
+requires-python = ">=3.11"
+dependencies = ["msgpack"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

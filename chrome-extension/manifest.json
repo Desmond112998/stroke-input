@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "筆畫輸入法 Stroke Input",
+  "version": "1.0.0",
+  "description": "Chinese stroke input method (筆畫輸入法) for the browser",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["data/strokes.json", "data/phrases.json"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
