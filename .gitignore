@@ -9,4 +9,4 @@ build/
 .env
 .venv/
 .kiro/
-.kiro/
+*.zip

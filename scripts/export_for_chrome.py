@@ -1,4 +1,10 @@
-"""Export stroke data as sorted JSON for the Chrome extension."""
+"""Export stroke data as sorted JSON for the Chrome extension.
+
+Characters with multiple stroke sequence variants (from Conway's regex
+alternatives) are exported as separate entries so the binary-search prefix
+match in the extension finds the character regardless of which stroke
+convention the user follows.
+"""
 import sys, json
 from pathlib import Path
 
@@ -9,10 +15,15 @@ from stroke_input.data.serializer import load_msgpack
 records = load_msgpack(Path("data/stroke_db.msgpack"))
 
 # Build sorted array: [sequence_string, character, frequency]
+# Multiple entries per character are expected (one per stroke variant)
 data = []
+seen: set[tuple[str, str]] = set()
 for r in records:
     seq = "".join(str(s) for s in r.stroke_sequence)
-    data.append([seq, r.character, round(r.frequency, 4)])
+    key = (seq, r.character)
+    if key not in seen:
+        seen.add(key)
+        data.append([seq, r.character, round(r.frequency, 4)])
 
 data.sort(key=lambda x: x[0])
 

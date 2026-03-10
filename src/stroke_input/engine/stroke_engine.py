@@ -135,7 +135,17 @@ class StrokeEngine:
         results: list[CharacterRecord] = []
         for node in nodes:
             self._collect_all_into(node, results)
-        return results
+
+        # Deduplicate: a character may appear multiple times due to stroke
+        # sequence variants (e.g. 該 can be indexed under both 1111251415334
+        # and 4111251415334). Keep the first occurrence per character.
+        seen: set[str] = set()
+        deduped: list[CharacterRecord] = []
+        for rec in results:
+            if rec.character not in seen:
+                seen.add(rec.character)
+                deduped.append(rec)
+        return deduped
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -52,6 +52,20 @@
   }
 
   // ── Trie-like prefix search on sorted array ────────────────────
+  // Deduplicates results: a character may appear under multiple stroke
+  // sequence variants (e.g. 該 indexed as both 1111251... and 4111251...).
+  // We keep the highest-frequency entry per character.
+  function dedup(results) {
+    const seen = new Map();
+    for (const r of results) {
+      const ch = r[1];
+      if (!seen.has(ch) || r[2] > seen.get(ch)[2]) {
+        seen.set(ch, r);
+      }
+    }
+    return Array.from(seen.values());
+  }
+
   function searchPrefix(prefix) {
       if (!prefix) return [];
 
@@ -73,8 +87,9 @@
           if (!seq.startsWith(pfx)) break;
           results.push(allRecords[i]);
         }
-        results.sort((a, b) => b[2] - a[2]);
-        return results;
+        const unique = dedup(results);
+        unique.sort((a, b) => b[2] - a[2]);
+        return unique;
       }
 
       // Slow path: wildcard-aware matching
@@ -87,8 +102,9 @@
           results.push(allRecords[i]);
         }
       }
-      results.sort((a, b) => b[2] - a[2]);
-      return results;
+      const unique = dedup(results);
+      unique.sort((a, b) => b[2] - a[2]);
+      return unique;
     }
 
 
@@ -122,8 +138,7 @@
       if (!dragging) return;
       overlay.style.left = (e.clientX - dragOffsetX) + "px";
       overlay.style.top = (e.clientY - dragOffsetY) + "px";
-      overlay.style.bottom = "auto";
-      overlay.style.transform = "none";
+      overlay.style.right = "auto";
     });
     document.addEventListener("mouseup", () => { dragging = false; });
   }

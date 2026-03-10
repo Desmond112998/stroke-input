@@ -64,48 +64,66 @@ def parse_ranking(path: Path) -> dict[str, float]:
 
 
 def expand_sequence_regex(seq_regex: str) -> list[str]:
-    """Expand a simple stroke sequence regex into all possible sequences.
+    """Expand a stroke sequence regex into all possible sequences.
 
     Handles patterns like: (135|153), (1|3)12, 12(5|25)1
+    Also handles backreferences like \\1 which repeat the matched group.
+    E.g. (1534|1543)\\1 -> 15341534, 15431543
+
     Returns a list of all possible digit-only sequences.
     """
-    # Remove backslash references like \1 (backreferences to capture groups)
-    # For our purposes, we just take the first alternative
-    seq_regex = re.sub(r'\\[0-9]', '', seq_regex)
-
-    # If no parentheses, return as-is (if it's pure digits)
-    if '(' not in seq_regex:
+    # If no parentheses and no backrefs, return as-is
+    if '(' not in seq_regex and '\\' not in seq_regex:
         if re.fullmatch(r'[1-5]+', seq_regex):
             return [seq_regex]
         return []
 
-    # Expand parenthesized alternatives
-    # Find the first group and expand it
-    results = ['']
+    # Parse into tokens: each result tracks (accumulated_string, {group_num: matched_text})
+    results: list[tuple[str, dict[int, str]]] = [('', {})]
+    group_num = 0
     i = 0
+
     while i < len(seq_regex):
         if seq_regex[i] == '(':
+            group_num += 1
+            current_group = group_num
             # Find matching close paren
             j = seq_regex.index(')', i)
-            alternatives = seq_regex[i+1:j].split('|')
+            alternatives = seq_regex[i + 1:j].split('|')
             new_results = []
-            for prefix in results:
+            for acc, groups in results:
                 for alt in alternatives:
-                    new_results.append(prefix + alt)
+                    new_groups = dict(groups)
+                    new_groups[current_group] = alt
+                    new_results.append((acc + alt, new_groups))
             results = new_results
             i = j + 1
+        elif seq_regex[i] == '\\' and i + 1 < len(seq_regex) and seq_regex[i + 1].isdigit():
+            # Backreference: replace with the captured group text
+            ref = int(seq_regex[i + 1])
+            new_results = []
+            for acc, groups in results:
+                replacement = groups.get(ref, '')
+                new_results.append((acc + replacement, groups))
+            results = new_results
+            i += 2
         elif seq_regex[i] in '12345':
-            results = [r + seq_regex[i] for r in results]
+            results = [(acc + seq_regex[i], groups) for acc, groups in results]
             i += 1
         else:
             i += 1
 
     # Filter to only valid sequences
-    return [r for r in results if re.fullmatch(r'[1-5]+', r)]
+    return [acc for acc, _ in results if re.fullmatch(r'[1-5]+', acc)]
 
 
 def parse_stroke_data(path: Path, rankings: dict[str, float]) -> list:
-    """Parse codepoint-character-sequence.txt into CharacterRecords."""
+    """Parse codepoint-character-sequence.txt into CharacterRecords.
+
+    Each character may have multiple stroke sequence variants (from regex
+    alternatives in the source data). All variants are included as separate
+    CharacterRecord entries so the trie indexes every valid stroke path.
+    """
     from stroke_input.data.models import CharacterRecord
 
     records = []
@@ -138,25 +156,26 @@ def parse_stroke_data(path: Path, rankings: dict[str, float]) -> list:
             continue
         seen_chars.add(character)
 
-        # Expand the sequence regex to get possible stroke sequences
+        # Expand the sequence regex to get ALL possible stroke sequences
         sequences = expand_sequence_regex(seq_regex)
         if not sequences:
             continue
 
-        # Use the first (primary) sequence
-        primary_seq = sequences[0]
-        stroke_sequence = [int(d) for d in primary_seq]
-
         freq = rankings.get(character, 0.0)
 
-        records.append(CharacterRecord(
-            character=character,
-            stroke_sequence=stroke_sequence,
-            stroke_count=len(stroke_sequence),
-            frequency=freq,
-        ))
+        # Index every variant so users can find the character regardless
+        # of which stroke convention they follow (e.g. macOS vs Nokia)
+        for seq_str in sequences:
+            stroke_sequence = [int(d) for d in seq_str]
+            records.append(CharacterRecord(
+                character=character,
+                stroke_sequence=stroke_sequence,
+                stroke_count=len(stroke_sequence),
+                frequency=freq,
+            ))
 
     return records
+
 
 
 def main() -> None:

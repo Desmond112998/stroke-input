@@ -1,67 +1,99 @@
+/* ── Stroke Input Overlay ─────────────────────────────────── */
 #stroke-input-overlay {
   position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 12px;
+  right: 16px;
+  left: auto;
+  bottom: auto;
+  transform: none;
   z-index: 2147483647;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-  padding: 8px 12px;
+
+  background: rgba(30, 30, 30, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+  padding: 10px 14px;
   font-family: "Microsoft YaHei", "PingFang TC", "Noto Sans CJK TC", sans-serif;
   display: none;
-  min-width: 360px;
+  min-width: 340px;
+  max-width: 480px;
   user-select: none;
   cursor: move;
+  transition: box-shadow 0.2s ease;
+}
+
+#stroke-input-overlay:hover {
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 #stroke-input-overlay.active {
   display: block;
 }
 
-#stroke-input-strokes {
-  font-size: 22px;
-  color: #333;
-  padding: 2px 0 6px 0;
-  min-height: 28px;
-  letter-spacing: 4px;
+/* ── Drag handle hint ────────────────────────────────────── */
+#stroke-input-overlay::before {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  margin: 0 auto 8px auto;
 }
 
+/* ── Stroke display ──────────────────────────────────────── */
+#stroke-input-strokes {
+  font-size: 22px;
+  color: #e0e0e0;
+  padding: 2px 0 6px 0;
+  min-height: 28px;
+  letter-spacing: 6px;
+}
+
+/* ── Candidates row ──────────────────────────────────────── */
 #stroke-input-candidates {
   display: flex;
   flex-wrap: nowrap;
-  gap: 2px;
+  gap: 4px;
   padding: 4px 0;
   min-height: 28px;
 }
 
 .stroke-candidate {
-  font-size: 16px;
-  color: #222;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: 17px;
+  color: #f0f0f0;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
 .stroke-candidate:hover {
-  background: #e8f0fe;
+  background: rgba(100, 160, 255, 0.25);
+  transform: translateY(-1px);
 }
 
 .stroke-candidate .num {
-  color: #888;
-  font-size: 12px;
-  margin-right: 1px;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 11px;
+  margin-right: 2px;
 }
 
+/* ── Phrases row ─────────────────────────────────────────── */
 #stroke-input-phrases {
   display: flex;
   flex-wrap: nowrap;
-  gap: 2px;
-  padding: 4px 0;
+  gap: 4px;
+  padding: 6px 0 2px 0;
   min-height: 0;
-  border-top: 1px solid #eee;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 #stroke-input-phrases:empty {
@@ -71,35 +103,39 @@
 
 .stroke-phrase {
   font-size: 14px;
-  color: #446;
-  padding: 2px 6px;
-  border-radius: 4px;
+  color: #c0b8e0;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
 .stroke-phrase:hover {
-  background: #f0e8fe;
+  background: rgba(160, 130, 255, 0.2);
+  transform: translateY(-1px);
 }
 
 .stroke-phrase .num {
-  color: #888;
+  color: rgba(255, 255, 255, 0.3);
   font-size: 11px;
-  margin-right: 1px;
+  margin-right: 2px;
 }
 
+/* ── Page indicator ──────────────────────────────────────── */
 #stroke-input-page {
   font-size: 11px;
-  color: #999;
+  color: rgba(255, 255, 255, 0.3);
   text-align: right;
   padding-top: 2px;
 }
 
+/* ── Status bar ──────────────────────────────────────────── */
 #stroke-input-status {
   font-size: 11px;
-  color: #aaa;
+  color: rgba(255, 255, 255, 0.25);
   text-align: right;
-  padding-top: 4px;
-  border-top: 1px solid #eee;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   margin-top: 4px;
 }
