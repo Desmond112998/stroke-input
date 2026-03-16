@@ -1,5 +1,6 @@
 // 筆畫輸入法 Chrome Extension - Content Script
 // Stroke Input Method for Chinese character input in the browser
+// Enhanced with Cantonese frequency, bigram model, and user adaptation
 
 (function () {
   "use strict";
@@ -10,12 +11,24 @@
   const PAGE_SIZE = 9;
   const TOGGLE_KEY = "`"; // backtick to toggle on/off
 
+  // Ranking weights
+  const W_STATIC_FREQ = 0.35;
+  const W_USER_FREQ = 0.30;
+  const W_BIGRAM = 0.25;
+  const W_STROKE_PROXIMITY = 0.10;
+
+  // User frequency normalization cap
+  const USER_FREQ_CAP = 50;
+  // Max stroke distance for proximity scoring
+  const STROKE_PROX_MAX = 10;
+
   // ── State ──────────────────────────────────────────────────────
   let active = false;
   let chineseMode = true; // true = 中文, false = 英文 (Shift toggles)
   let strokeSeq = [];
   let allRecords = []; // sorted [seq, char, freq]
   let phrases = {};    // first_char -> [[phrase, freq], ...]
+  let bigrams = {};    // char -> {char2: score, ...}
   let candidates = [];
   let page = 0;
   let phraseMode = false;
@@ -24,6 +37,11 @@
   let lastSelectedChar = "";
   let dataLoaded = false;
   let targetElement = null;
+
+  // User frequency store (in-memory, persisted to chrome.storage)
+  let userFreq = {};       // char -> count
+  let userFreqDirty = false;
+  let userFreqSaveTimer = null;
 
   // Shift-toggle tracking: detect bare Shift press (down→up with no other key)
   let shiftDown = false;
@@ -34,13 +52,45 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
+  // ── User Frequency Persistence ─────────────────────────────────
+  function loadUserFreq() {
+    try {
+      chrome.storage.local.get(["userFreq"], (data) => {
+        if (chrome.runtime.lastError) return;
+        if (data.userFreq && typeof data.userFreq === "object") {
+          userFreq = data.userFreq;
+        }
+      });
+    } catch (e) {}
+  }
+
+  function saveUserFreq() {
+    if (!userFreqDirty) return;
+    try {
+      chrome.storage.local.set({ userFreq }, () => {
+        if (chrome.runtime.lastError) return;
+        userFreqDirty = false;
+      });
+    } catch (e) {}
+  }
+
+  function bumpUserFreq(char) {
+    userFreq[char] = (userFreq[char] || 0) + 1;
+    userFreqDirty = true;
+    // Debounce save: write at most every 5 seconds
+    if (!userFreqSaveTimer) {
+      userFreqSaveTimer = setTimeout(() => {
+        saveUserFreq();
+        userFreqSaveTimer = null;
+      }, 5000);
+    }
+  }
+
   // ── Global State Sync ──────────────────────────────────────────
   function broadcastState(updates) {
     try {
       chrome.runtime.sendMessage({ type: "setState", ...updates });
-    } catch (e) {
-      // Extension context may be invalidated; ignore
-    }
+    } catch (e) {}
   }
 
   try {
@@ -75,22 +125,57 @@
     phrasePage = 0;
   }
 
-
   // ── Data Loading ───────────────────────────────────────────────
   async function loadData() {
     if (dataLoaded) return;
     try {
-      const [strokeResp, phraseResp] = await Promise.all([
+      const [strokeResp, phraseResp, bigramResp] = await Promise.all([
         fetch(chrome.runtime.getURL("data/strokes.json")),
         fetch(chrome.runtime.getURL("data/phrases.json")),
+        fetch(chrome.runtime.getURL("data/bigrams.json")),
       ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
+      bigrams = await bigramResp.json();
       dataLoaded = true;
-      console.log(`[筆畫] Loaded ${allRecords.length} characters, ${Object.keys(phrases).length} phrase buckets`);
+      loadUserFreq();
+      console.log(
+        `[筆畫] Loaded ${allRecords.length} characters, ` +
+        `${Object.keys(phrases).length} phrase buckets, ` +
+        `${Object.keys(bigrams).length} bigram entries`
+      );
     } catch (e) {
       console.error("[筆畫] Failed to load data:", e);
     }
+  }
+
+  // ── Ranking ────────────────────────────────────────────────────
+  function computeScore(record) {
+    const char = record[1];
+    const staticFreq = record[2]; // already 0-1
+
+    // User frequency (normalized to 0-1)
+    const rawUserFreq = userFreq[char] || 0;
+    const userScore = Math.min(rawUserFreq / USER_FREQ_CAP, 1.0);
+
+    // Bigram score: how likely is this char to follow lastSelectedChar
+    let bigramScore = 0;
+    if (lastSelectedChar && bigrams[lastSelectedChar]) {
+      bigramScore = bigrams[lastSelectedChar][char] || 0;
+    }
+
+    // Stroke proximity: prefer chars whose stroke count is close to input length
+    const strokeCount = record[0].length;
+    const inputLen = strokeSeq.length;
+    const distance = Math.abs(strokeCount - inputLen);
+    const proximityScore = Math.max(0, 1 - distance / STROKE_PROX_MAX);
+
+    return (
+      W_STATIC_FREQ * staticFreq +
+      W_USER_FREQ * userScore +
+      W_BIGRAM * bigramScore +
+      W_STROKE_PROXIMITY * proximityScore
+    );
   }
 
   // ── Trie-like prefix search on sorted array ────────────────────
@@ -106,39 +191,40 @@
   }
 
   function searchPrefix(prefix) {
-      if (!prefix) return [];
-      const hasWildcard = prefix.includes(6);
-      if (!hasWildcard) {
-        const pfx = prefix.join("");
-        const results = [];
-        let lo = 0, hi = allRecords.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          if (allRecords[mid][0] < pfx) lo = mid + 1;
-          else hi = mid;
-        }
-        for (let i = lo; i < allRecords.length; i++) {
-          const seq = allRecords[i][0];
-          if (!seq.startsWith(pfx)) break;
-          results.push(allRecords[i]);
-        }
-        const unique = dedup(results);
-        unique.sort((a, b) => b[2] - a[2]);
-        return unique;
+    if (!prefix) return [];
+    const hasWildcard = prefix.includes(6);
+    let results;
+
+    if (!hasWildcard) {
+      const pfx = prefix.join("");
+      results = [];
+      let lo = 0, hi = allRecords.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (allRecords[mid][0] < pfx) lo = mid + 1;
+        else hi = mid;
       }
+      for (let i = lo; i < allRecords.length; i++) {
+        const seq = allRecords[i][0];
+        if (!seq.startsWith(pfx)) break;
+        results.push(allRecords[i]);
+      }
+    } else {
       const pattern = "^" + prefix.map(s => s === 6 ? "[1-5]" : String(s)).join("");
       const re = new RegExp(pattern);
-      const results = [];
+      results = [];
       for (let i = 0; i < allRecords.length; i++) {
         if (re.test(allRecords[i][0])) {
           results.push(allRecords[i]);
         }
       }
-      const unique = dedup(results);
-      unique.sort((a, b) => b[2] - a[2]);
-      return unique;
-  }
+    }
 
+    const unique = dedup(results);
+    // Sort by composite score (descending)
+    unique.sort((a, b) => computeScore(b) - computeScore(a));
+    return unique;
+  }
 
   // ── UI Creation ────────────────────────────────────────────────
   let overlay = null;
@@ -225,7 +311,6 @@
     render();
   }
 
-
   // ── Text Insertion ─────────────────────────────────────────────
   function insertText(text) {
     if (!targetElement) return;
@@ -259,6 +344,9 @@
     insertText(char);
     lastSelectedChar = char;
 
+    // Track user frequency
+    bumpUserFreq(char);
+
     strokeSeq = [];
     candidates = [];
     page = 0;
@@ -277,15 +365,21 @@
     if (!item) return;
 
     const remaining = item[0].slice(1);
-    if (remaining) insertText(remaining);
+    if (remaining) {
+      insertText(remaining);
+      // Track frequency for each character in the phrase
+      for (const ch of remaining) {
+        bumpUserFreq(ch);
+      }
+      // Set last selected to the final character for bigram continuity
+      lastSelectedChar = item[0][item[0].length - 1];
+    }
 
     phraseMode = false;
     phraseList = [];
     phrasePage = 0;
-    lastSelectedChar = "";
     render();
   }
-
 
   // ── Keyboard Handler ───────────────────────────────────────────
   function isTextInput(el) {
@@ -444,7 +538,6 @@
     }
   }
 
-
   // ── Click handlers for candidates ──────────────────────────────
   function handleOverlayClick(e) {
     const cand = e.target.closest(".stroke-candidate");
@@ -481,6 +574,11 @@
         render();
       });
     } catch (e) {}
+
+    // Save user frequency on page unload
+    window.addEventListener("beforeunload", () => {
+      saveUserFreq();
+    });
 
     console.log("[筆畫] Stroke Input Method loaded. Press ` to toggle, Shift for 中/英.");
   }
