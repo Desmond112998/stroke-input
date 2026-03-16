@@ -34,6 +34,48 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
+  // ── Global State Sync ──────────────────────────────────────────
+  function broadcastState(updates) {
+    try {
+      chrome.runtime.sendMessage({ type: "setState", ...updates });
+    } catch (e) {
+      // Extension context may be invalidated; ignore
+    }
+  }
+
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg.type === "stateChanged") {
+        if (msg.active !== undefined && msg.active !== active) {
+          active = msg.active;
+          if (active) {
+            loadData();
+            if (overlay) overlay.classList.add("active");
+          } else {
+            if (overlay) overlay.classList.remove("active");
+            resetInputState();
+          }
+          render();
+        }
+        if (msg.chineseMode !== undefined && msg.chineseMode !== chineseMode) {
+          chineseMode = msg.chineseMode;
+          if (!chineseMode) resetInputState();
+          render();
+        }
+      }
+    });
+  } catch (e) {}
+
+  function resetInputState() {
+    strokeSeq = [];
+    candidates = [];
+    phraseMode = false;
+    phraseList = [];
+    page = 0;
+    phrasePage = 0;
+  }
+
+
   // ── Data Loading ───────────────────────────────────────────────
   async function loadData() {
     if (dataLoaded) return;
@@ -52,9 +94,6 @@
   }
 
   // ── Trie-like prefix search on sorted array ────────────────────
-  // Deduplicates results: a character may appear under multiple stroke
-  // sequence variants (e.g. 該 indexed as both 1111251... and 4111251...).
-  // We keep the highest-frequency entry per character.
   function dedup(results) {
     const seen = new Map();
     for (const r of results) {
@@ -68,12 +107,8 @@
 
   function searchPrefix(prefix) {
       if (!prefix) return [];
-
-      // Check if prefix contains any wildcard (6)
       const hasWildcard = prefix.includes(6);
-
       if (!hasWildcard) {
-        // Fast path: simple string prefix match
         const pfx = prefix.join("");
         const results = [];
         let lo = 0, hi = allRecords.length;
@@ -91,9 +126,6 @@
         unique.sort((a, b) => b[2] - a[2]);
         return unique;
       }
-
-      // Slow path: wildcard-aware matching
-      // Build a regex where 6 matches any digit 1-5
       const pattern = "^" + prefix.map(s => s === 6 ? "[1-5]" : String(s)).join("");
       const re = new RegExp(pattern);
       const results = [];
@@ -105,8 +137,7 @@
       const unique = dedup(results);
       unique.sort((a, b) => b[2] - a[2]);
       return unique;
-    }
-
+  }
 
 
   // ── UI Creation ────────────────────────────────────────────────
@@ -152,16 +183,13 @@
     const phrasesEl = overlay.querySelector("#stroke-input-phrases");
     const pageEl = overlay.querySelector("#stroke-input-page");
 
-    // Strokes display
     const modeLabel = chineseMode ? "中" : "英";
     const symbols = strokeSeq.map((s) => STROKE_SYMBOLS[s] || "?").join(" ");
     strokesEl.textContent = chineseMode ? symbols : "";
 
-    // Update status with current mode
     const statusEl = overlay.querySelector("#stroke-input-status");
     statusEl.textContent = `${modeLabel} | \` 開關 | Shift 中英切換`;
 
-    // Candidates or phrases
     if (phraseMode && phraseList.length > 0) {
       candidatesEl.innerHTML = "";
       const start = phrasePage * PAGE_SIZE;
@@ -197,6 +225,7 @@
     render();
   }
 
+
   // ── Text Insertion ─────────────────────────────────────────────
   function insertText(text) {
     if (!targetElement) return;
@@ -230,12 +259,10 @@
     insertText(char);
     lastSelectedChar = char;
 
-    // Clear strokes
     strokeSeq = [];
     candidates = [];
     page = 0;
 
-    // Show phrases
     if (phrases[char] && phrases[char].length > 0) {
       phraseMode = true;
       phraseList = phrases[char];
@@ -249,17 +276,16 @@
     const item = phraseList[start + idx];
     if (!item) return;
 
-    // Insert remaining characters (first char already inserted)
     const remaining = item[0].slice(1);
     if (remaining) insertText(remaining);
 
-    // Clear phrase mode
     phraseMode = false;
     phraseList = [];
     phrasePage = 0;
     lastSelectedChar = "";
     render();
   }
+
 
   // ── Keyboard Handler ───────────────────────────────────────────
   function isTextInput(el) {
@@ -279,9 +305,8 @@
     if (e.key === "Shift") {
       shiftDown = true;
       shiftUsedWithOther = false;
-      return; // don't prevent default
+      return;
     }
-    // Any other key while Shift is held means it's a combo, not a toggle
     if (shiftDown) {
       shiftUsedWithOther = true;
     }
@@ -298,19 +323,14 @@
         targetElement = document.activeElement;
       } else {
         overlay.classList.remove("active");
-        strokeSeq = [];
-        candidates = [];
-        phraseMode = false;
-        phraseList = [];
-        page = 0;
+        resetInputState();
       }
+      broadcastState({ active, chineseMode });
       render();
       return;
     }
 
     if (!active) return;
-
-    // In English mode, let everything through
     if (!chineseMode) return;
 
     // Remember the focused text input
@@ -324,7 +344,6 @@
     if (STROKE_KEYS[key] !== undefined) {
       e.preventDefault();
       e.stopPropagation();
-      // If in phrase mode, exit it first
       if (phraseMode) {
         phraseMode = false;
         phraseList = [];
@@ -350,7 +369,6 @@
         selectCandidate(num);
         return;
       }
-      // No candidates — let the key through
       return;
     }
 
@@ -372,7 +390,6 @@
         refreshCandidates();
         return;
       }
-      // No strokes — let backspace through to delete text normally
       return;
     }
 
@@ -380,12 +397,7 @@
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      strokeSeq = [];
-      candidates = [];
-      phraseMode = false;
-      phraseList = [];
-      page = 0;
-      phrasePage = 0;
+      resetInputState();
       render();
       return;
     }
@@ -417,32 +429,21 @@
       render();
       return;
     }
-
-    // Any other key while strokes are active — let it through but clear state
-    // (e.g. Enter, Tab, etc.)
   }
 
-  // ── Shift key-up handler for Chinese/English toggle ─────────
   function handleKeyUp(e) {
     if (e.key === "Shift") {
-      // Bare Shift press (no other key pressed while Shift was held)
       if (shiftDown && !shiftUsedWithOther && active) {
         chineseMode = !chineseMode;
-        // Clear stroke state when switching to English
-        if (!chineseMode) {
-          strokeSeq = [];
-          candidates = [];
-          phraseMode = false;
-          phraseList = [];
-          page = 0;
-          phrasePage = 0;
-        }
+        if (!chineseMode) resetInputState();
+        broadcastState({ chineseMode });
         render();
       }
       shiftDown = false;
       shiftUsedWithOther = false;
     }
   }
+
 
   // ── Click handlers for candidates ──────────────────────────────
   function handleOverlayClick(e) {
@@ -466,6 +467,21 @@
     overlay.addEventListener("click", handleOverlayClick);
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
+
+    // Restore global state on load
+    try {
+      chrome.runtime.sendMessage({ type: "getState" }, (resp) => {
+        if (chrome.runtime.lastError || !resp) return;
+        active = !!resp.active;
+        chineseMode = resp.chineseMode !== false;
+        if (active) {
+          loadData();
+          if (overlay) overlay.classList.add("active");
+        }
+        render();
+      });
+    } catch (e) {}
+
     console.log("[筆畫] Stroke Input Method loaded. Press ` to toggle, Shift for 中/英.");
   }
 
