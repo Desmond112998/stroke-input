@@ -37,6 +37,7 @@
   let lastSelectedChar = "";
   let dataLoaded = false;
   let targetElement = null;
+  let highlightIdx = -1; // arrow-key highlight index within current page (-1 = none)
 
   // User frequency store (in-memory, persisted to chrome.storage)
   let userFreq = {};       // char -> count
@@ -123,6 +124,7 @@
     phraseList = [];
     page = 0;
     phrasePage = 0;
+    highlightIdx = -1;
   }
 
   // ── Data Loading ───────────────────────────────────────────────
@@ -226,11 +228,29 @@
     return unique;
   }
 
+  // ── Cleanup & Version Guard ─────────────────────────────────────
+  // When Chrome reloads the extension, old content scripts remain alive.
+  // Signal any previous instance to self-destruct via a custom event.
+  window.dispatchEvent(new CustomEvent("__stroke_input_cleanup__"));
+
+  let destroyed = false;
+  window.addEventListener("__stroke_input_cleanup__", () => {
+    // A newer instance has loaded — tear down this one
+    destroyed = true;
+    if (overlay) {
+      overlay.remove();
+      overlay = null;
+    }
+  });
+
   // ── UI Creation ────────────────────────────────────────────────
   let overlay = null;
 
   function createOverlay() {
     if (overlay) return;
+    // Remove any orphaned overlay elements left in the DOM
+    document.querySelectorAll("#stroke-input-overlay").forEach(el => el.remove());
+
     overlay = document.createElement("div");
     overlay.id = "stroke-input-overlay";
     overlay.innerHTML = `
@@ -274,26 +294,28 @@
     strokesEl.textContent = chineseMode ? symbols : "";
 
     const statusEl = overlay.querySelector("#stroke-input-status");
-    statusEl.textContent = `${modeLabel} | \` 開關 | Shift 中英切換`;
+    statusEl.innerHTML =
+      `<span class="stroke-mode-badge ${chineseMode ? "cn" : "en"}">${modeLabel}</span> ` +
+      `<kbd>\`</kbd> 開關 · <kbd>Shift</kbd> 中英 · <kbd>◀▶</kbd> 選字 · <kbd>▲▼</kbd> 翻頁`;
 
     if (phraseMode && phraseList.length > 0) {
       candidatesEl.innerHTML = "";
       const start = phrasePage * PAGE_SIZE;
       const pageItems = phraseList.slice(start, start + PAGE_SIZE);
       phrasesEl.innerHTML = pageItems
-        .map((p, i) => `<span class="stroke-phrase" data-idx="${i}"><span class="num">${i + 1}.</span>${p[0]}</span>`)
+        .map((p, i) => `<span class="stroke-phrase${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${p[0]}</span>`)
         .join("");
       const totalPages = Math.ceil(phraseList.length / PAGE_SIZE);
-      pageEl.textContent = totalPages > 1 ? `${phrasePage + 1}/${totalPages}` : "";
+      pageEl.textContent = totalPages > 1 ? `← ${phrasePage + 1}/${totalPages} →` : "";
     } else {
       phrasesEl.innerHTML = "";
       const start = page * PAGE_SIZE;
       const pageItems = candidates.slice(start, start + PAGE_SIZE);
       candidatesEl.innerHTML = pageItems
-        .map((r, i) => `<span class="stroke-candidate" data-idx="${i}"><span class="num">${i + 1}.</span>${r[1]}</span>`)
+        .map((r, i) => `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${r[1]}</span>`)
         .join("");
       const totalPages = Math.ceil(candidates.length / PAGE_SIZE);
-      pageEl.textContent = totalPages > 1 ? `${page + 1}/${totalPages}` : "";
+      pageEl.textContent = totalPages > 1 ? `← ${page + 1}/${totalPages} →` : "";
     }
   }
 
@@ -301,6 +323,7 @@
     phraseMode = false;
     phraseList = [];
     phrasePage = 0;
+    highlightIdx = -1;
     if (strokeSeq.length === 0) {
       candidates = [];
       page = 0;
@@ -395,6 +418,8 @@
   }
 
   function handleKeyDown(e) {
+    if (destroyed) return;
+
     // Track Shift for bare-press detection
     if (e.key === "Shift") {
       shiftDown = true;
@@ -496,10 +521,104 @@
       return;
     }
 
+    // ── Arrow key navigation for candidates/phrases ──────────────
+    const hasCandidates = phraseMode ? phraseList.length > 0 : candidates.length > 0;
+
+    // ArrowRight: move highlight forward
+    if (e.key === "ArrowRight" && hasCandidates) {
+      e.preventDefault();
+      e.stopPropagation();
+      const currentList = phraseMode ? phraseList : candidates;
+      const currentPage = phraseMode ? phrasePage : page;
+      const start = currentPage * PAGE_SIZE;
+      const pageCount = Math.min(PAGE_SIZE, currentList.length - start);
+      if (highlightIdx < pageCount - 1) {
+        highlightIdx++;
+      } else {
+        // Wrap to next page if available
+        const totalPages = Math.ceil(currentList.length / PAGE_SIZE);
+        if ((phraseMode ? phrasePage : page) < totalPages - 1) {
+          if (phraseMode) phrasePage++; else page++;
+          highlightIdx = 0;
+        }
+      }
+      render();
+      return;
+    }
+
+    // ArrowLeft: move highlight backward
+    if (e.key === "ArrowLeft" && hasCandidates) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (highlightIdx > 0) {
+        highlightIdx--;
+      } else if (highlightIdx === 0) {
+        // Wrap to previous page if available
+        if ((phraseMode ? phrasePage : page) > 0) {
+          if (phraseMode) phrasePage--; else page--;
+          const currentList = phraseMode ? phraseList : candidates;
+          const currentPage = phraseMode ? phrasePage : page;
+          const start = currentPage * PAGE_SIZE;
+          const pageCount = Math.min(PAGE_SIZE, currentList.length - start);
+          highlightIdx = pageCount - 1;
+        }
+      } else {
+        // highlightIdx === -1, start from end of page
+        const currentList = phraseMode ? phraseList : candidates;
+        const currentPage = phraseMode ? phrasePage : page;
+        const start = currentPage * PAGE_SIZE;
+        const pageCount = Math.min(PAGE_SIZE, currentList.length - start);
+        highlightIdx = pageCount - 1;
+      }
+      render();
+      return;
+    }
+
+    // ArrowDown: next page
+    if (e.key === "ArrowDown" && hasCandidates) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (phraseMode) {
+        const total = Math.ceil(phraseList.length / PAGE_SIZE);
+        if (phrasePage < total - 1) { phrasePage++; highlightIdx = -1; }
+      } else {
+        const total = Math.ceil(candidates.length / PAGE_SIZE);
+        if (page < total - 1) { page++; highlightIdx = -1; }
+      }
+      render();
+      return;
+    }
+
+    // ArrowUp: previous page
+    if (e.key === "ArrowUp" && hasCandidates) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (phraseMode) {
+        if (phrasePage > 0) { phrasePage--; highlightIdx = -1; }
+      } else {
+        if (page > 0) { page--; highlightIdx = -1; }
+      }
+      render();
+      return;
+    }
+
+    // Enter: confirm highlighted candidate/phrase
+    if (e.key === "Enter" && hasCandidates && highlightIdx >= 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (phraseMode) {
+        selectPhrase(highlightIdx);
+      } else {
+        selectCandidate(highlightIdx);
+      }
+      return;
+    }
+
     // Page Down / Space for next page
     if (e.key === "PageDown" || (e.key === " " && (candidates.length > 0 || phraseList.length > 0))) {
       e.preventDefault();
       e.stopPropagation();
+      highlightIdx = -1;
       if (phraseMode) {
         const total = Math.ceil(phraseList.length / PAGE_SIZE);
         if (phrasePage < total - 1) phrasePage++;
@@ -515,6 +634,7 @@
     if (e.key === "PageUp") {
       e.preventDefault();
       e.stopPropagation();
+      highlightIdx = -1;
       if (phraseMode) {
         if (phrasePage > 0) phrasePage--;
       } else {
@@ -526,6 +646,7 @@
   }
 
   function handleKeyUp(e) {
+    if (destroyed) return;
     if (e.key === "Shift") {
       if (shiftDown && !shiftUsedWithOther && active) {
         chineseMode = !chineseMode;

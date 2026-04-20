@@ -80,6 +80,11 @@
   transform: translateY(-1px);
 }
 
+.stroke-candidate.highlighted {
+  background: rgba(100, 160, 255, 0.35);
+  outline: 1px solid rgba(100, 160, 255, 0.5);
+}
+
 .stroke-candidate .num {
   color: rgba(255, 255, 255, 0.35);
   font-size: 11px;
@@ -116,6 +121,11 @@
   transform: translateY(-1px);
 }
 
+.stroke-phrase.highlighted {
+  background: rgba(160, 130, 255, 0.3);
+  outline: 1px solid rgba(160, 130, 255, 0.5);
+}
+
 .stroke-phrase .num {
   color: rgba(255, 255, 255, 0.3);
   font-size: 11px;
@@ -133,9 +143,41 @@
 /* ── Status bar ──────────────────────────────────────────── */
 #stroke-input-status {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.25);
-  text-align: right;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: left;
   padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   margin-top: 4px;
+  line-height: 1.6;
+}
+
+#stroke-input-status kbd {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0 1px;
+}
+
+.stroke-mode-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+.stroke-mode-badge.cn {
+  background: rgba(100, 180, 255, 0.2);
+  color: #90c8ff;
+}
+
+.stroke-mode-badge.en {
+  background: rgba(255, 180, 100, 0.2);
+  color: #ffc890;
 }
