@@ -1,12 +1,29 @@
 # 筆畫輸入法 — Stroke Input Method
 
-A desktop Chinese input method for Windows that lets you type Chinese characters by entering their stroke order. Built with Python and Qt (PySide6).
+A Chinese stroke-based input method available as a **Chrome extension** and a **Python engine library**. Type Chinese characters by entering their stroke order — five basic strokes mapped to keyboard keys, with real-time candidate matching, phrase suggestions, and Cantonese-optimized ranking.
 
-Type strokes using keyboard keys, pick candidates from a ranked list, and get phrase suggestions — all from a lightweight floating window that stays out of your way.
+## Chrome Extension
 
-## How It Works
+The primary interface is a Chrome extension that works in any text field on any webpage. A floating overlay shows stroke input, candidates, and phrase suggestions without leaving the browser.
 
-Chinese characters are composed of five basic stroke types. You enter strokes in writing order and the engine narrows down matching characters in real time:
+### Features
+
+- Five basic strokes (J/K/L/U/I/O) plus wildcard key
+- Real-time prefix matching with binary search on a sorted stroke index
+- Composite ranking: static frequency, user adaptation, bigram context, and stroke proximity
+- Cantonese frequency boosts — common Cantonese characters (係、唔、咗、嘅、冇…) rank higher
+- Bigram model for contextual prediction (P(char₂ | char₁) from phrase co-occurrence)
+- Phrase suggestions after character selection (Cantonese collocations included)
+- Compatible with multiple stroke order standards (macOS, Nokia, Conway)
+- User frequency adaptation persisted via `chrome.storage`
+- Shift to toggle Chinese/English mode; backtick (`` ` ``) to toggle on/off
+- Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
+- Works with `<input>`, `<textarea>`, and `contenteditable` elements
+- Draggable overlay with dark glassmorphism UI
+- Global state sync across all tabs via background service worker
+- Lightweight — no special permissions, no data collection
+
+### Key Mapping
 
 | Key | Stroke | Name | Symbol |
 |-----|--------|------|--------|
@@ -17,115 +34,127 @@ Chinese characters are composed of five basic stroke types. You enter strokes in
 | I   | 折 Turning    | zhé  | 乙 |
 | O   | 萬用 Wildcard | —    | ＊ |
 
-For example, to type 大 (big), you'd press `K` `L` `U` (豎 撇 點) and select it from the candidate list.
+### Controls
 
-## Features
+| Key | Action |
+|-----|--------|
+| `` ` `` (backtick) | Toggle input method on/off |
+| Shift | Toggle Chinese / English mode |
+| J / K / L / U / I / O | Enter strokes |
+| 1–9 | Select candidate or phrase |
+| ◀ / ▶ | Highlight prev/next candidate |
+| ▲ / ▼ | Previous / next page |
+| Space / Page Down | Next page |
+| Page Up | Previous page |
+| Enter | Confirm highlighted candidate |
+| Backspace | Remove last stroke (or dismiss phrases) |
+| Escape | Clear all strokes |
 
-- Trie-based prefix matching engine for fast character lookup
-- Fuzzy matching — tolerates one stroke substitution when exact matches are few
-- Contextual phrase suggestions after selecting a character
-- Composite ranking that blends static frequency, user history, context, and match quality
-- Traditional Chinese preference (slight ranking boost)
-- Paginated candidate list (1–9 number keys, Page Up/Down)
-- Floating borderless window — always-on-top, draggable, stays visible on focus loss
-- Global hotkey toggle (default: `Ctrl+Shift+S`)
-- System tray with show/hide, settings, and exit
-- Settings dialog for hotkey, page size, opacity, and auto-start
-- Auto-start on Windows login (registry-based)
-- User frequency adaptation — characters you pick often rise in rank
-- Crash recovery and resource monitoring
-- Windows 10/11 compatibility layer
+### Installation
 
-## Requirements
+Install from the Chrome Web Store, or load unpacked from the `chrome-extension/` directory for development.
+
+### Packaging
+
+```bash
+python scripts/package_extension.py
+```
+
+This rebuilds the stroke database, exports data, validates the manifest, and produces `stroke-input-extension.zip` ready for Web Store upload.
+
+## Python Engine Library
+
+The `stroke_input` package provides the core engine, data tools, and ranking logic used to build the extension's data files.
+
+### Engine Architecture
+
+- **StrokeEngine** — trie-based prefix matching for fast character lookup with wildcard support
+- **InferenceEngine** — fuzzy matching (one-stroke substitution when exact matches < 3) and contextual phrase boosting
+- **FrequencyRanker** — composite scoring blending static frequency, user history, context, and match quality with Traditional Chinese preference
+
+### Requirements
 
 - Python 3.11+
-- Windows 10 or 11
+- `msgpack` (only runtime dependency)
 
-## Installation
+### Installation
 
 ```bash
 pip install -e .
 ```
 
-### Dependencies
+### Data Setup
 
-The project uses PySide6 for the GUI and the `keyboard` library for global hotkeys. Install them if not pulled automatically:
+
+#### Stroke Database
+
+Character stroke data comes from [Conway's stroke data](https://github.com/stroke-input/stroke-input-data) (CC-BY-4.0). The raw file `data/codepoint-character-sequence.txt` is parsed into a serialized database (`data/stroke_db.msgpack`).
 
 ```bash
-pip install PySide6 keyboard
+python scripts/download_stroke_data.py
 ```
 
-## Data Setup
+#### Phrase Dictionary
 
-The app needs two data sources:
-
-### 1. Stroke Database
-
-Character stroke data comes from the [Make Me a Hanzi](https://github.com/skishore/makemeahanzi) dataset. Place `dictionary.txt` and `graphics.txt` in the `data/` directory. On first run, the app parses these files and builds a serialized stroke database (`stroke_db.msgpack`).
-
-### 2. Phrase Dictionary
-
-A Traditional Chinese phrase dictionary (`data/phrases.tsv`) is included, sourced from CC-CEDICT (CC BY-SA 4.0). To regenerate it from the latest CEDICT data:
+A Traditional Chinese phrase dictionary (`data/phrases.tsv`) sourced from CC-CEDICT (CC BY-SA 4.0):
 
 ```bash
 python scripts/generate_phrase_dict.py
 ```
 
-## Usage
+#### Cantonese Data
+
+Generates Cantonese frequency overrides, phrase dictionary (with Cantonese collocations), and bigram model:
 
 ```bash
-python -m stroke_input
+python scripts/generate_cantonese_data.py
 ```
 
-Or after installation:
+#### Export for Chrome
 
-```python
-from stroke_input.main import main
-main()
+Exports the stroke database with Cantonese frequency boosts as sorted JSON for the extension's binary search:
+
+```bash
+python scripts/export_for_chrome.py
 ```
 
-### Controls
-
-| Key | Action |
-|-----|--------|
-| J / K / L / U / I / O | Enter strokes |
-| 1–9 | Select candidate or phrase |
-| Backspace | Remove last stroke 
-| Escape | Clear all strokes |
-| Page Up / Page Down | Navigate candidate pages |
-| Ctrl+Shift+S | Toggle input window (global) |
-
-## Configuration
-
-Settings are stored in `%LOCALAPPDATA%\StrokeInput\config.json` and can be edited through the settings dialog (right-click tray icon → Settings).
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `global_hotkey` | `ctrl+shift+s` | Toggle hotkey |
-| `page_size` | `9` | Candidates per page (1–9) |
-| `auto_start` | `false` | Launch on Windows login |
-| `window_opacity` | `1.0` | Window opacity (0.1–1.0) |
-| `memory_threshold_mb` | `200` | Memory limit before GC |
-| `log_level` | `INFO` | Logging verbosity |
-
-## Project Structure
-
-```
-src/stroke_input/
-├── main.py                 # Application entry point
-├── config/                 # Configuration, logging, autostart, crash recovery
-├── data/                   # Data models, parsers, phrase loader, user frequency
-├── engine/                 # Stroke engine (trie), inference (fuzzy), frequency ranker
-├── gui/                    # Input window, candidate list, phrase suggestions, tray, settings
-└── output/                 # Character output (keyboard simulation / clipboard)
-```
-
-## Testing
+### Testing
 
 ```bash
 pytest
 ```
 
+## Project Structure
+
+```
+chrome-extension/           # Chrome extension (Manifest V3)
+├── manifest.json           # Extension manifest
+├── background.js           # Service worker for global state sync
+├── content.js              # Input handling, search, ranking, UI
+├── style.css               # Overlay styling
+└── data/                   # Exported JSON data files
+    ├── strokes.json        # Sorted [sequence, char, freq] array
+    ├── phrases.json        # Phrase dict indexed by first char
+    ├── bigrams.json        # Bigram model {char1: {char2: score}}
+    └── cantonese_freq.json # Cantonese frequency overrides
+
+src/stroke_input/           # Python engine library
+├── config/                 # Configuration and constants
+├── data/                   # Data models, parsers, phrase loader, serializer
+├── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
+├── gui/                    # Desktop GUI components (PySide6)
+└── output/                 # Character output (keyboard simulation / clipboard)
+
+scripts/                    # Data generation and build tools
+├── download_stroke_data.py # Download and parse Conway stroke data
+├── generate_phrase_dict.py # Generate phrase dictionary from CC-CEDICT
+├── generate_cantonese_data.py # Generate Cantonese freq, phrases, bigrams
+├── export_for_chrome.py    # Export stroke DB as sorted JSON for extension
+├── package_extension.py    # Package extension zip for Web Store
+└── generate_icons.py       # Generate extension icons
+```
+
 ## License
 
-Phrase dictionary data derived from CC-CEDICT, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- Stroke data: [Conway Stroke Data](https://github.com/stroke-input/stroke-input-data) (CC-BY-4.0)
+- Phrase dictionary: derived from [CC-CEDICT](https://cc-cedict.org/) (CC BY-SA 4.0)
