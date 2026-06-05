@@ -1,6 +1,6 @@
 // 筆畫輸入法 Chrome Extension - Content Script
 // Stroke Input Method for Chinese character input in the browser
-// Enhanced with Cantonese frequency, bigram model, and user adaptation
+// Enhanced with Cantonese frequency, trigram model, recency, position-aware ranking
 
 (function () {
   "use strict";
@@ -11,16 +11,20 @@
   const PAGE_SIZE = 9;
   const TOGGLE_KEY = "`"; // backtick to toggle on/off
 
-  // Ranking weights
-  const W_STATIC_FREQ = 0.35;
-  const W_USER_FREQ = 0.30;
-  const W_BIGRAM = 0.25;
-  const W_STROKE_PROXIMITY = 0.10;
+  // Ranking weights (aligned with Python FrequencyRanker)
+  const W_STATIC_FREQ    = 0.30;
+  const W_USER_FREQ      = 0.25;
+  const W_BIGRAM         = 0.15;  // bigram (prev1 only, legacy)
+  const W_TRIGRAM        = 0.15;  // trigram (prev2, prev1) — new
+  const W_RECENCY        = 0.10;  // recency decay — new
+  const W_POSITION       = 0.05;  // position-aware — new
 
   // User frequency normalization cap
   const USER_FREQ_CAP = 50;
-  // Max stroke distance for proximity scoring
-  const STROKE_PROX_MAX = 10;
+  // Recency decay time constant in seconds (τ = 30 days)
+  const RECENCY_TAU_SEC = 30 * 86400;
+  // Max rank history per (strokeSeqKey, char)
+  const MAX_RANK_HISTORY = 20;
 
   // ── State ──────────────────────────────────────────────────────
   let active = false;
@@ -29,18 +33,22 @@
   let allRecords = []; // sorted [seq, char, freq]
   let phrases = {};    // first_char -> [[phrase, freq], ...]
   let bigrams = {};    // char -> {char2: score, ...}
+  let trigrams = {};   // prev2 -> {prev1 -> {char: score}} — new
   let candidates = [];
   let page = 0;
   let phraseMode = false;
   let phraseList = [];
   let phrasePage = 0;
   let lastSelectedChar = "";
+  let prevSelectedChar = "";   // second-to-last for trigram context — new
   let dataLoaded = false;
   let targetElement = null;
   let highlightIdx = -1; // arrow-key highlight index within current page (-1 = none)
 
-  // User frequency store (in-memory, persisted to chrome.storage)
-  let userFreq = {};       // char -> count
+  // User frequency store (in-memory, persisted to chrome.storage) — v2 format
+  let userFreq = {};         // char -> count
+  let userTimestamps = {};   // char -> last-selection Unix timestamp (seconds) — new
+  let userPositions = {};    // strokeSeqKey -> {char -> [rank, ...]} — new
   let userFreqDirty = false;
   let userFreqSaveTimer = null;
 
@@ -53,13 +61,24 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
-  // ── User Frequency Persistence ─────────────────────────────────
+  // ── User Frequency Persistence (v2 format) ────────────────────
   function loadUserFreq() {
     try {
-      chrome.storage.local.get(["userFreq"], (data) => {
+      chrome.storage.local.get(["userFreqV2"], (data) => {
         if (chrome.runtime.lastError) return;
-        if (data.userFreq && typeof data.userFreq === "object") {
-          userFreq = data.userFreq;
+        const stored = data.userFreqV2;
+        if (stored && typeof stored === "object") {
+          if (stored.v === 2) {
+            // v2 format
+            userFreq       = stored.counts      || {};
+            userTimestamps = stored.timestamps  || {};
+            userPositions  = stored.positions   || {};
+          } else {
+            // legacy flat format upgrade
+            userFreq = stored;
+            userTimestamps = {};
+            userPositions  = {};
+          }
         }
       });
     } catch (e) {}
@@ -68,15 +87,28 @@
   function saveUserFreq() {
     if (!userFreqDirty) return;
     try {
-      chrome.storage.local.set({ userFreq }, () => {
+      const payload = { v: 2, counts: userFreq, timestamps: userTimestamps, positions: userPositions };
+      chrome.storage.local.set({ userFreqV2: payload }, () => {
         if (chrome.runtime.lastError) return;
         userFreqDirty = false;
       });
     } catch (e) {}
   }
 
-  function bumpUserFreq(char) {
+  function bumpUserFreq(char, rank) {
+    // Count
     userFreq[char] = (userFreq[char] || 0) + 1;
+    // Timestamp (recency)
+    userTimestamps[char] = Date.now() / 1000; // Unix seconds
+    // Position-aware: record rank if provided
+    if (rank !== undefined) {
+      const seqKey = strokeSeq.join("");
+      if (!userPositions[seqKey]) userPositions[seqKey] = {};
+      if (!userPositions[seqKey][char]) userPositions[seqKey][char] = [];
+      const ranks = userPositions[seqKey][char];
+      ranks.push(rank);
+      if (ranks.length > MAX_RANK_HISTORY) ranks.shift();
+    }
     userFreqDirty = true;
     // Debounce save: write at most every 5 seconds
     if (!userFreqSaveTimer) {
@@ -125,26 +157,32 @@
     page = 0;
     phrasePage = 0;
     highlightIdx = -1;
+    lastSelectedChar = "";
+    prevSelectedChar = "";
+    consecutiveChars = [];
   }
 
   // ── Data Loading ───────────────────────────────────────────────
   async function loadData() {
     if (dataLoaded) return;
     try {
-      const [strokeResp, phraseResp, bigramResp] = await Promise.all([
+      const [strokeResp, phraseResp, bigramResp, trigramResp] = await Promise.all([
         fetch(chrome.runtime.getURL("data/strokes.json")),
         fetch(chrome.runtime.getURL("data/phrases.json")),
         fetch(chrome.runtime.getURL("data/bigrams.json")),
+        fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
       ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
       bigrams = await bigramResp.json();
+      trigrams = trigramResp ? await trigramResp.json() : {};
       dataLoaded = true;
       loadUserFreq();
       console.log(
         `[筆畫] Loaded ${allRecords.length} characters, ` +
         `${Object.keys(phrases).length} phrase buckets, ` +
-        `${Object.keys(bigrams).length} bigram entries`
+        `${Object.keys(bigrams).length} bigram entries, ` +
+        `${Object.keys(trigrams).length} trigram p2-contexts`
       );
     } catch (e) {
       console.error("[筆畫] Failed to load data:", e);
@@ -156,27 +194,50 @@
     const char = record[1];
     const staticFreq = record[2]; // already 0-1
 
-    // User frequency (normalized to 0-1)
+    // 1. User frequency (normalized to 0-1)
     const rawUserFreq = userFreq[char] || 0;
     const userScore = Math.min(rawUserFreq / USER_FREQ_CAP, 1.0);
 
-    // Bigram score: how likely is this char to follow lastSelectedChar
+    // 2. Bigram score: how likely is this char to follow lastSelectedChar (prev1)
     let bigramScore = 0;
     if (lastSelectedChar && bigrams[lastSelectedChar]) {
       bigramScore = bigrams[lastSelectedChar][char] || 0;
     }
 
-    // Stroke proximity: prefer chars whose stroke count is close to input length
-    const strokeCount = record[0].length;
-    const inputLen = strokeSeq.length;
-    const distance = Math.abs(strokeCount - inputLen);
-    const proximityScore = Math.max(0, 1 - distance / STROKE_PROX_MAX);
+    // 3. Trigram score: P(char | prevSelectedChar, lastSelectedChar) — new
+    let trigramScore = 0;
+    if (prevSelectedChar && lastSelectedChar &&
+        trigrams[prevSelectedChar] &&
+        trigrams[prevSelectedChar][lastSelectedChar]) {
+      trigramScore = trigrams[prevSelectedChar][lastSelectedChar][char] || 0;
+    }
+
+    // 4. Recency score: exp(-Δt / τ) — new
+    let recencyScore = 0;
+    const ts = userTimestamps[char];
+    if (ts) {
+      const deltaSec = Math.max(0, Date.now() / 1000 - ts);
+      recencyScore = Math.exp(-deltaSec / RECENCY_TAU_SEC);
+    }
+
+    // 5. Position-aware score: 1 / (1 + avg_rank) for this stroke prefix — new
+    let positionScore = 0;
+    const seqKey = strokeSeq.join("");
+    if (seqKey && userPositions[seqKey] && userPositions[seqKey][char]) {
+      const ranks = userPositions[seqKey][char];
+      if (ranks.length > 0) {
+        const avgRank = ranks.reduce((a, b) => a + b, 0) / ranks.length;
+        positionScore = 1.0 / (1.0 + avgRank);
+      }
+    }
 
     return (
-      W_STATIC_FREQ * staticFreq +
-      W_USER_FREQ * userScore +
-      W_BIGRAM * bigramScore +
-      W_STROKE_PROXIMITY * proximityScore
+      W_STATIC_FREQ  * staticFreq  +
+      W_USER_FREQ    * userScore   +
+      W_BIGRAM       * bigramScore +
+      W_TRIGRAM      * trigramScore +
+      W_RECENCY      * recencyScore +
+      W_POSITION     * positionScore
     );
   }
 
@@ -228,7 +289,95 @@
     return unique;
   }
 
-  // ── Cleanup & Version Guard ─────────────────────────────────────
+  // ── Multi-step Phrase Prediction (B1/B5) ──────────────────────
+  // Lightweight JS beam-search using trigrams + bigrams loaded at runtime.
+  // Mirrors Python PhrasePredictor behaviour.
+  const BEAM_WIDTH = 5;
+  const BEAM_DEPTH = 3;
+  const BEAM_MIN_PROB = 1e-5;
+  const BEAM_MAX_RESULTS = 9;
+
+  function predictPhrase(seed, maxDepth) {
+    if (!seed) return [];
+    const depth = maxDepth !== undefined ? maxDepth : BEAM_DEPTH;
+
+    // Build vocab from bigram keys (chars that ever appeared as next-char)
+    const vocab = new Set();
+    for (const p of Object.keys(bigrams)) {
+      vocab.add(p);
+      for (const c of Object.keys(bigrams[p])) vocab.add(c);
+    }
+    if (vocab.size === 0) return [];
+
+    // beam entry: { phrase, negLogProb, steps }
+    let beam = [{ phrase: seed, negLogProb: 0, steps: 0 }];
+    const collected = [];
+
+    for (let step = 0; step < depth; step++) {
+      if (!beam.length) break;
+      const next = [];
+      for (const state of beam) {
+        const ph = state.phrase;
+        const prev2 = ph.length >= 2 ? ph[ph.length - 2] : null;
+        const prev1 = ph.length >= 1 ? ph[ph.length - 1] : null;
+
+        for (const char of vocab) {
+          // Trigram score
+          let triScore = 0;
+          if (prev2 && prev1 && trigrams[prev2] && trigrams[prev2][prev1])
+            triScore = trigrams[prev2][prev1][char] || 0;
+          // Bigram score
+          let biScore = 0;
+          if (prev1 && bigrams[prev1]) biScore = bigrams[prev1][char] || 0;
+          // Interpolated
+          const p = triScore > 0
+            ? 0.6 * triScore + 0.3 * biScore + 0.1 * 0.001
+            : biScore > 0
+              ? 0.7 * biScore + 0.3 * 0.001
+              : 0;
+          if (p < BEAM_MIN_PROB) continue;
+          next.push({ phrase: ph + char, negLogProb: state.negLogProb - Math.log(p), steps: state.steps + 1 });
+        }
+      }
+      if (!next.length) break;
+      next.sort((a, b) => a.negLogProb - b.negLogProb);
+      beam = next.slice(0, BEAM_WIDTH);
+      for (const s of beam) {
+        if (s.phrase.length > seed.length) {
+          const avgLogProb = -s.negLogProb / s.steps;
+          collected.push({ phrase: s.phrase, score: Math.exp(avgLogProb) });
+        }
+      }
+    }
+
+    // Deduplicate and sort by score
+    const seen = new Set();
+    const unique = [];
+    for (const c of collected.sort((a, b) => b.score - a.score)) {
+      if (!seen.has(c.phrase)) {
+        seen.add(c.phrase);
+        unique.push(c);
+        if (unique.length >= BEAM_MAX_RESULTS) break;
+      }
+    }
+    return unique;
+  }
+
+  // ── Phrase Learning (B3) ───────────────────────────────────────
+  // Track consecutive selections for auto-learning
+  let consecutiveChars = [];
+
+  function autoLearnPhrase() {
+    if (consecutiveChars.length >= 2) {
+      const phrase = consecutiveChars.join("");
+      // Store in userPositions (reuse structure) under special key
+      if (!userPositions["__phrases__"]) userPositions["__phrases__"] = {};
+      userPositions["__phrases__"][phrase] = (userPositions["__phrases__"][phrase] || []);
+      userPositions["__phrases__"][phrase].push(1);
+      userFreqDirty = true;
+    }
+    consecutiveChars = [];
+  }
   // When Chrome reloads the extension, old content scripts remain alive.
   // Signal any previous instance to self-destruct via a custom event.
   window.dispatchEvent(new CustomEvent("__stroke_input_cleanup__"));
@@ -281,6 +430,13 @@
   }
 
   // ── UI Rendering ───────────────────────────────────────────────
+  function isTrigramDriven(record) {
+    // A candidate is "trigram-driven" if trigram score > 0 for current context
+    if (!prevSelectedChar || !lastSelectedChar) return false;
+    const t = trigrams[prevSelectedChar];
+    return !!(t && t[lastSelectedChar] && t[lastSelectedChar][record[1]]);
+  }
+
   function render() {
     if (!overlay) return;
 
@@ -291,7 +447,12 @@
 
     const modeLabel = chineseMode ? "中" : "英";
     const symbols = strokeSeq.map((s) => STROKE_SYMBOLS[s] || "?").join(" ");
-    strokesEl.textContent = chineseMode ? symbols : "";
+
+    // Auto-commit hint: show ↵ badge when only 1 candidate
+    const isUnique = candidates.length === 1 && !phraseMode;
+    strokesEl.innerHTML = chineseMode
+      ? (symbols ? `<span>${symbols}</span>${isUnique ? ' <span class="auto-commit-hint" title="唯一候選，按空格上屏">↵</span>' : ""}` : "")
+      : "";
 
     const statusEl = overlay.querySelector("#stroke-input-status");
     statusEl.innerHTML =
@@ -312,7 +473,10 @@
       const start = page * PAGE_SIZE;
       const pageItems = candidates.slice(start, start + PAGE_SIZE);
       candidatesEl.innerHTML = pageItems
-        .map((r, i) => `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${r[1]}</span>`)
+        .map((r, i) => {
+          const badge = isTrigramDriven(r) ? '<span class="tri-badge" title="觸發：上文脈絡">★</span>' : "";
+          return `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${badge}${r[1]}</span>`;
+        })
         .join("");
       const totalPages = Math.ceil(candidates.length / PAGE_SIZE);
       pageEl.textContent = totalPages > 1 ? `← ${page + 1}/${totalPages} →` : "";
@@ -323,7 +487,8 @@
     phraseMode = false;
     phraseList = [];
     phrasePage = 0;
-    highlightIdx = -1;
+    // C4: default highlight = 0 (first candidate pre-selected)
+    highlightIdx = 0;
     if (strokeSeq.length === 0) {
       candidates = [];
       page = 0;
@@ -360,23 +525,50 @@
   // ── Selection Handlers ─────────────────────────────────────────
   function selectCandidate(idx) {
     const start = page * PAGE_SIZE;
-    const item = candidates[start + idx];
+    const globalIdx = start + idx;
+    const item = candidates[globalIdx];
     if (!item) return;
 
     const char = item[1];
     insertText(char);
+
+    // Advance two-slot history for trigram context
+    prevSelectedChar = lastSelectedChar;
     lastSelectedChar = char;
 
-    // Track user frequency
-    bumpUserFreq(char);
+    // Track user frequency, recency, and position
+    bumpUserFreq(char, globalIdx);
+
+    // Auto-learn consecutive phrase
+    consecutiveChars.push(char);
 
     strokeSeq = [];
     candidates = [];
     page = 0;
 
-    if (phrases[char] && phrases[char].length > 0) {
+    // Multi-step phrase suggestion (B5): beam-search from selected char
+    // Merge with static phrase dictionary: static phrases take precedence
+    const staticPhrases = (phrases[char] && phrases[char].length > 0)
+      ? phrases[char].map(p => ({ phrase: p[0], score: p[1], isStatic: true }))
+      : [];
+    const beamPhrases = predictPhrase(char)
+      .filter(p => p.phrase.length > 1)
+      .map(p => ({ ...p, isStatic: false }));
+
+    // Build merged phrase list: static first, then beam (no duplicates)
+    const seen = new Set(staticPhrases.map(p => p.phrase));
+    const merged = [...staticPhrases];
+    for (const bp of beamPhrases) {
+      if (!seen.has(bp.phrase)) {
+        seen.add(bp.phrase);
+        merged.push(bp);
+      }
+    }
+
+    if (merged.length > 0) {
       phraseMode = true;
-      phraseList = phrases[char];
+      // Normalize to [[phrase, score]] format for existing render code
+      phraseList = merged.map(p => [p.phrase, p.score]);
       phrasePage = 0;
     }
     render();
@@ -394,8 +586,13 @@
       for (const ch of remaining) {
         bumpUserFreq(ch);
       }
-      // Set last selected to the final character for bigram continuity
-      lastSelectedChar = item[0][item[0].length - 1];
+      // Auto-learn the full phrase
+      const fullPhrase = item[0];
+      for (const ch of fullPhrase) consecutiveChars.push(ch);
+      autoLearnPhrase();
+      // Advance context: last two chars of the completed phrase
+      prevSelectedChar = fullPhrase.length >= 2 ? fullPhrase[fullPhrase.length - 2] : lastSelectedChar;
+      lastSelectedChar = fullPhrase[fullPhrase.length - 1];
     }
 
     phraseMode = false;
@@ -614,11 +811,25 @@
       return;
     }
 
-    // Page Down / Space for next page
-    if (e.key === "PageDown" || (e.key === " " && (candidates.length > 0 || phraseList.length > 0))) {
+    // Page Down / Space
+    if (e.key === "PageDown" || e.key === " ") {
+      if (candidates.length === 0 && phraseList.length === 0) return;
       e.preventDefault();
       e.stopPropagation();
-      highlightIdx = -1;
+
+      // C1: Auto-commit on unique candidate
+      if (e.key === " " && candidates.length === 1 && !phraseMode) {
+        selectCandidate(0);
+        return;
+      }
+      // Space on highlighted → select
+      if (e.key === " " && highlightIdx >= 0) {
+        if (phraseMode) selectPhrase(highlightIdx);
+        else selectCandidate(highlightIdx);
+        return;
+      }
+      // Otherwise: next page
+      highlightIdx = 0;
       if (phraseMode) {
         const total = Math.ceil(phraseList.length / PAGE_SIZE);
         if (phrasePage < total - 1) phrasePage++;

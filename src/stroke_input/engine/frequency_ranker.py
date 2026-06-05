@@ -1,10 +1,23 @@
 """FrequencyRanker: composite scoring and ranking for stroke input candidates.
 
 Combines static frequency, user adaptation score, contextual relevance,
-and match quality into a single composite score for candidate ordering.
+match quality, trigram language model score, recency, and position-aware
+signal into a single composite score for candidate ordering.
 
-Composite score formula:
-    score = w1 * static_freq + w2 * user_freq + w3 * context_boost + w4 * match_quality
+Composite score formula (v2):
+    score = w_static   * static_freq
+          + w_user     * user_freq
+          + w_context  * context_boost
+          + w_match    * match_quality
+          + w_trigram  * trigram_score     (requires NgramModel + RankingContext)
+          + w_recency  * recency_score     (requires UserFreqStore + RankingContext)
+          + w_position * position_score   (requires UserFreqStore + RankingContext)
+
+The three new weights (trigram, recency, position) default to 0.0, so all
+existing callers continue to work unchanged.
+
+Pass a :class:`RankingContext` to :meth:`FrequencyRanker.composite_score` or
+:meth:`FrequencyRanker.rank` to activate the new signals.
 
 Secondary sort: stroke_count ascending (fewer strokes first) when composite
 scores are equal.
@@ -15,9 +28,11 @@ Traditional Chinese forms receive a small boost over Simplified forms.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
+from stroke_input.data.ngram_model import NgramModel
 from stroke_input.data.user_freq_store import UserFreqStore
 from stroke_input.engine.inference_engine import ScoredCandidate
 
@@ -67,26 +82,55 @@ def _is_likely_traditional(character: str) -> bool:
 
 
 @dataclass
+class RankingContext:
+    """Per-query context passed to FrequencyRanker for enhanced scoring.
+
+    Attributes:
+        prev1: The immediately preceding selected character, or None.
+        prev2: The character before prev1, or None.  Only used when
+               prev1 is also set.
+        stroke_seq: Current stroke prefix string (e.g. ``"jk"``), used for
+                    position-aware scoring.
+        now: Reference Unix timestamp for recency scoring.  Defaults to the
+             current time at construction.
+    """
+
+    prev1: Optional[str] = None
+    prev2: Optional[str] = None
+    stroke_seq: str = ""
+    now: float = field(default_factory=time.time)
+
+
+@dataclass
 class RankerWeights:
     """Configurable weights for the composite scoring formula.
+
+    The three new fields (trigram, recency, position) default to 0.0 for
+    full backwards compatibility with existing call sites.
 
     Attributes:
         static_freq: Weight for the static character frequency.
         user_freq: Weight for the user adaptation score.
-        context_boost: Weight for contextual relevance.
+        context_boost: Weight for contextual relevance (phrase bigram).
         match_quality: Weight for match quality (exact vs fuzzy).
+        trigram: Weight for the trigram language model score.
+        recency: Weight for the recency decay score.
+        position: Weight for the position-aware learning score.
     """
 
     static_freq: float = DEFAULT_WEIGHT_STATIC_FREQ
     user_freq: float = DEFAULT_WEIGHT_USER_FREQ
     context_boost: float = DEFAULT_WEIGHT_CONTEXT_BOOST
     match_quality: float = DEFAULT_WEIGHT_MATCH_QUALITY
+    trigram: float = 0.0
+    recency: float = 0.0
+    position: float = 0.0
 
 
 class FrequencyRanker:
     """Ranks candidates using a weighted composite score.
 
-    The ranker combines four signals:
+    The ranker combines up to seven signals:
 
     1. **Static frequency** — from the stroke database (CharacterRecord.frequency).
     2. **User adaptation** — how often the user has selected this character
@@ -94,6 +138,14 @@ class FrequencyRanker:
     3. **Contextual relevance** — boost from phrase associations
        (ScoredCandidate.context_boost), normalized to [0, 1].
     4. **Match quality** — 1.0 for exact prefix matches, 0.5 for fuzzy.
+    5. **Trigram score** — P(char | prev2, prev1) from NgramModel. *(opt)*
+    6. **Recency score** — exp(-Δt/τ) from UserFreqStore timestamps. *(opt)*
+    7. **Position score** — 1/(1+avg_rank) from UserFreqStore positions. *(opt)*
+
+    Signals 5-7 require a :class:`RankingContext` and (for 6-7) a
+    :class:`~stroke_input.data.user_freq_store.UserFreqStore`.  When no
+    context is provided, or the corresponding weight is 0, these signals
+    silently contribute 0.
 
     Tie-breaking:
     - Fewer strokes first (stroke_count ascending).
@@ -101,28 +153,37 @@ class FrequencyRanker:
 
     Usage::
 
-        ranker = FrequencyRanker(user_freq_store)
-        ranked = ranker.rank(candidates)
+        ranker = FrequencyRanker(user_freq_store, ngram_model=ngram)
+        ctx = RankingContext(prev1="港", prev2="香", stroke_seq="jk")
+        ranked = ranker.rank(candidates, context=ctx)
     """
 
     def __init__(
         self,
         user_freq_store: Optional[UserFreqStore] = None,
         weights: Optional[RankerWeights] = None,
+        ngram_model: Optional[NgramModel] = None,
     ) -> None:
         self._user_freq = user_freq_store
         self._weights = weights or RankerWeights()
+        self._ngram = ngram_model
 
     @property
     def weights(self) -> RankerWeights:
         """Current ranking weights."""
         return self._weights
 
-    def composite_score(self, candidate: ScoredCandidate) -> float:
+    def composite_score(
+        self,
+        candidate: ScoredCandidate,
+        context: Optional[RankingContext] = None,
+    ) -> float:
         """Compute the composite ranking score for a single candidate.
 
         Args:
             candidate: A scored candidate from the InferenceEngine.
+            context: Optional per-query context for trigram/recency/position
+                     signals.  When ``None``, new signals contribute 0.
 
         Returns:
             The composite score (higher is better).
@@ -140,7 +201,7 @@ class FrequencyRanker:
             user_score = min(raw / _USER_FREQ_NORM_CAP, 1.0)
 
         # 3. Contextual boost (normalize — phrase frequencies can vary)
-        ctx = min(candidate.context_boost, 1.0)
+        ctx_boost = min(candidate.context_boost, 1.0)
 
         # 4. Match quality
         mq = MATCH_QUALITY_EXACT if candidate.is_exact else MATCH_QUALITY_FUZZY
@@ -148,9 +209,34 @@ class FrequencyRanker:
         score = (
             w.static_freq * static_freq
             + w.user_freq * user_score
-            + w.context_boost * ctx
+            + w.context_boost * ctx_boost
             + w.match_quality * mq
         )
+
+        # 5–7: Context-dependent signals
+        if context is not None:
+            # 5. Trigram score
+            if w.trigram > 0 and self._ngram is not None:
+                tri = self._ngram.score(
+                    rec.character,
+                    prev1=context.prev1,
+                    prev2=context.prev2,
+                )
+                score += w.trigram * tri
+
+            # 6. Recency score
+            if w.recency > 0 and self._user_freq is not None:
+                recency = self._user_freq.recency_score(
+                    rec.character, now=context.now
+                )
+                score += w.recency * recency
+
+            # 7. Position score
+            if w.position > 0 and self._user_freq is not None:
+                pos = self._user_freq.position_score(
+                    context.stroke_seq, rec.character
+                )
+                score += w.position * pos
 
         # Traditional Chinese boost
         if _is_likely_traditional(rec.character):
@@ -158,7 +244,11 @@ class FrequencyRanker:
 
         return score
 
-    def rank(self, candidates: list[ScoredCandidate]) -> list[ScoredCandidate]:
+    def rank(
+        self,
+        candidates: list[ScoredCandidate],
+        context: Optional[RankingContext] = None,
+    ) -> list[ScoredCandidate]:
         """Sort candidates by composite score descending.
 
         Tie-breaking order:
@@ -168,6 +258,7 @@ class FrequencyRanker:
 
         Args:
             candidates: Unranked list of scored candidates.
+            context: Optional per-query context (see :class:`RankingContext`).
 
         Returns:
             A new list sorted by composite ranking.
@@ -176,9 +267,7 @@ class FrequencyRanker:
             return []
 
         def sort_key(c: ScoredCandidate) -> tuple[float, int, int]:
-            score = self.composite_score(c)
-            # Negate score for descending sort; stroke_count ascending
-            # Traditional boost: 0 (traditional) sorts before 1 (simplified)
+            score = self.composite_score(c, context=context)
             trad = 0 if _is_likely_traditional(c.record.character) else 1
             return (-score, c.record.stroke_count, trad)
 

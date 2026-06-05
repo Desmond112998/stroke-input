@@ -17,7 +17,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["data/strokes.json", "data/phrases.json", "data/bigrams.json"],
+      "resources": ["data/strokes.json", "data/phrases.json", "data/bigrams.json", "data/trigrams.json"],
       "matches": ["<all_urls>"]
     }
   ],

@@ -76,6 +76,7 @@ class InferenceEngine:
         self._engine = stroke_engine
         self._phrase_dict = phrase_dict
         self._last_selected: Optional[str] = None
+        self._prev_selected: Optional[str] = None  # second-to-last (for trigram)
         # Pre-computed set of boosted characters (second chars of phrases)
         self._boosted_chars: dict[str, float] = {}
 
@@ -83,6 +84,11 @@ class InferenceEngine:
     def last_selected(self) -> Optional[str]:
         """The last character selected by the user (for contextual boost)."""
         return self._last_selected
+
+    @property
+    def prev_selected(self) -> Optional[str]:
+        """The second-to-last selected character (for trigram context)."""
+        return self._prev_selected
 
     # ------------------------------------------------------------------
     # Public API
@@ -92,11 +98,14 @@ class InferenceEngine:
         """Notify the engine that a character was selected.
 
         Updates the contextual boost set based on phrases starting with
-        *character* in the phrase dictionary.
+        *character* in the phrase dictionary.  Also advances the two-slot
+        history ring for trigram context (prev_selected ← last_selected ←
+        character).
 
         Args:
             character: The character the user just selected.
         """
+        self._prev_selected = self._last_selected
         self._last_selected = character
         self._boosted_chars = {}
 
@@ -115,7 +124,24 @@ class InferenceEngine:
     def clear_context(self) -> None:
         """Reset the contextual boost state."""
         self._last_selected = None
+        self._prev_selected = None
         self._boosted_chars = {}
+
+    @staticmethod
+    def is_unique_candidate(candidates: list[ScoredCandidate]) -> bool:
+        """Return True if *candidates* contains exactly one entry.
+
+        Used by the extension to show an auto-commit hint (C1): when the
+        stroke prefix uniquely identifies a single character the user can
+        press Space to commit without scrolling candidates.
+
+        Args:
+            candidates: List of scored candidates from :meth:`query`.
+
+        Returns:
+            ``True`` iff exactly one candidate is present.
+        """
+        return len(candidates) == 1
 
     def query(
         self,
