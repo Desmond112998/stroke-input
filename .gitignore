@@ -9,4 +9,4 @@ build/
 .env
 .venv/
 .kiro/
-*.zip
+*.zipstroke-input-extension.zip

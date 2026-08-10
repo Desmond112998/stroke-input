@@ -11,18 +11,12 @@
   const PAGE_SIZE = 9;
   const TOGGLE_KEY = "`"; // backtick to toggle on/off
 
-  // Ranking weights (aligned with Python FrequencyRanker)
-  const W_STATIC_FREQ    = 0.30;
-  const W_USER_FREQ      = 0.25;
-  const W_BIGRAM         = 0.15;  // bigram (prev1 only, legacy)
-  const W_TRIGRAM        = 0.15;  // trigram (prev2, prev1) — new
-  const W_RECENCY        = 0.10;  // recency decay — new
-  const W_POSITION       = 0.05;  // position-aware — new
+  // Pure helpers live in engine.js (loaded before this script).
+  const Engine = globalThis.StrokeInputEngine;
+  if (!Engine) {
+    console.error("[筆畫] StrokeInputEngine missing — is engine.js loaded?");
+  }
 
-  // User frequency normalization cap
-  const USER_FREQ_CAP = 50;
-  // Recency decay time constant in seconds (τ = 30 days)
-  const RECENCY_TAU_SEC = 30 * 86400;
   // Max rank history per (strokeSeqKey, char)
   const MAX_RANK_HISTORY = 20;
 
@@ -189,178 +183,32 @@
     }
   }
 
-  // ── Ranking ────────────────────────────────────────────────────
-  function computeScore(record) {
-    const char = record[1];
-    const staticFreq = record[2]; // already 0-1
-
-    // 1. User frequency (normalized to 0-1)
-    const rawUserFreq = userFreq[char] || 0;
-    const userScore = Math.min(rawUserFreq / USER_FREQ_CAP, 1.0);
-
-    // 2. Bigram score: how likely is this char to follow lastSelectedChar (prev1)
-    let bigramScore = 0;
-    if (lastSelectedChar && bigrams[lastSelectedChar]) {
-      bigramScore = bigrams[lastSelectedChar][char] || 0;
-    }
-
-    // 3. Trigram score: P(char | prevSelectedChar, lastSelectedChar) — new
-    let trigramScore = 0;
-    if (prevSelectedChar && lastSelectedChar &&
-        trigrams[prevSelectedChar] &&
-        trigrams[prevSelectedChar][lastSelectedChar]) {
-      trigramScore = trigrams[prevSelectedChar][lastSelectedChar][char] || 0;
-    }
-
-    // 4. Recency score: exp(-Δt / τ) — new
-    let recencyScore = 0;
-    const ts = userTimestamps[char];
-    if (ts) {
-      const deltaSec = Math.max(0, Date.now() / 1000 - ts);
-      recencyScore = Math.exp(-deltaSec / RECENCY_TAU_SEC);
-    }
-
-    // 5. Position-aware score: 1 / (1 + avg_rank) for this stroke prefix — new
-    let positionScore = 0;
-    const seqKey = strokeSeq.join("");
-    if (seqKey && userPositions[seqKey] && userPositions[seqKey][char]) {
-      const ranks = userPositions[seqKey][char];
-      if (ranks.length > 0) {
-        const avgRank = ranks.reduce((a, b) => a + b, 0) / ranks.length;
-        positionScore = 1.0 / (1.0 + avgRank);
-      }
-    }
-
-    return (
-      W_STATIC_FREQ  * staticFreq  +
-      W_USER_FREQ    * userScore   +
-      W_BIGRAM       * bigramScore +
-      W_TRIGRAM      * trigramScore +
-      W_RECENCY      * recencyScore +
-      W_POSITION     * positionScore
-    );
+  // ── Ranking / search / phrase helpers (delegated to engine.js) ─
+  function rankingContext() {
+    return {
+      userFreq,
+      userTimestamps,
+      userPositions,
+      strokeSeq,
+      lastSelectedChar,
+      prevSelectedChar,
+      bigrams,
+      trigrams,
+    };
   }
 
-  // ── Trie-like prefix search on sorted array ────────────────────
-  function dedup(results) {
-    const seen = new Map();
-    for (const r of results) {
-      const ch = r[1];
-      if (!seen.has(ch) || r[2] > seen.get(ch)[2]) {
-        seen.set(ch, r);
-      }
-    }
-    return Array.from(seen.values());
+  function computeScore(record) {
+    return Engine.computeScore(record, rankingContext());
   }
 
   function searchPrefix(prefix) {
-    if (!prefix) return [];
-    const hasWildcard = prefix.includes(6);
-    let results;
-
-    if (!hasWildcard) {
-      const pfx = prefix.join("");
-      results = [];
-      let lo = 0, hi = allRecords.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (allRecords[mid][0] < pfx) lo = mid + 1;
-        else hi = mid;
-      }
-      for (let i = lo; i < allRecords.length; i++) {
-        const seq = allRecords[i][0];
-        if (!seq.startsWith(pfx)) break;
-        results.push(allRecords[i]);
-      }
-    } else {
-      const pattern = "^" + prefix.map(s => s === 6 ? "[1-5]" : String(s)).join("");
-      const re = new RegExp(pattern);
-      results = [];
-      for (let i = 0; i < allRecords.length; i++) {
-        if (re.test(allRecords[i][0])) {
-          results.push(allRecords[i]);
-        }
-      }
-    }
-
-    const unique = dedup(results);
-    // Sort by composite score (descending)
-    unique.sort((a, b) => computeScore(b) - computeScore(a));
-    return unique;
+    return Engine.searchPrefix(prefix, allRecords, rankingContext());
   }
 
-  // ── Multi-step Phrase Prediction (B1/B5) ──────────────────────
-  // Lightweight JS beam-search using trigrams + bigrams loaded at runtime.
-  // Mirrors Python PhrasePredictor behaviour.
-  const BEAM_WIDTH = 5;
-  const BEAM_DEPTH = 3;
-  const BEAM_MIN_PROB = 1e-5;
-  const BEAM_MAX_RESULTS = 9;
-
   function predictPhrase(seed, maxDepth) {
-    if (!seed) return [];
-    const depth = maxDepth !== undefined ? maxDepth : BEAM_DEPTH;
-
-    // Build vocab from bigram keys (chars that ever appeared as next-char)
-    const vocab = new Set();
-    for (const p of Object.keys(bigrams)) {
-      vocab.add(p);
-      for (const c of Object.keys(bigrams[p])) vocab.add(c);
-    }
-    if (vocab.size === 0) return [];
-
-    // beam entry: { phrase, negLogProb, steps }
-    let beam = [{ phrase: seed, negLogProb: 0, steps: 0 }];
-    const collected = [];
-
-    for (let step = 0; step < depth; step++) {
-      if (!beam.length) break;
-      const next = [];
-      for (const state of beam) {
-        const ph = state.phrase;
-        const prev2 = ph.length >= 2 ? ph[ph.length - 2] : null;
-        const prev1 = ph.length >= 1 ? ph[ph.length - 1] : null;
-
-        for (const char of vocab) {
-          // Trigram score
-          let triScore = 0;
-          if (prev2 && prev1 && trigrams[prev2] && trigrams[prev2][prev1])
-            triScore = trigrams[prev2][prev1][char] || 0;
-          // Bigram score
-          let biScore = 0;
-          if (prev1 && bigrams[prev1]) biScore = bigrams[prev1][char] || 0;
-          // Interpolated
-          const p = triScore > 0
-            ? 0.6 * triScore + 0.3 * biScore + 0.1 * 0.001
-            : biScore > 0
-              ? 0.7 * biScore + 0.3 * 0.001
-              : 0;
-          if (p < BEAM_MIN_PROB) continue;
-          next.push({ phrase: ph + char, negLogProb: state.negLogProb - Math.log(p), steps: state.steps + 1 });
-        }
-      }
-      if (!next.length) break;
-      next.sort((a, b) => a.negLogProb - b.negLogProb);
-      beam = next.slice(0, BEAM_WIDTH);
-      for (const s of beam) {
-        if (s.phrase.length > seed.length) {
-          const avgLogProb = -s.negLogProb / s.steps;
-          collected.push({ phrase: s.phrase, score: Math.exp(avgLogProb) });
-        }
-      }
-    }
-
-    // Deduplicate and sort by score
-    const seen = new Set();
-    const unique = [];
-    for (const c of collected.sort((a, b) => b.score - a.score)) {
-      if (!seen.has(c.phrase)) {
-        seen.add(c.phrase);
-        unique.push(c);
-        if (unique.length >= BEAM_MAX_RESULTS) break;
-      }
-    }
-    return unique;
+    return Engine.predictPhrase(seed, bigrams, trigrams, {
+      maxDepth: maxDepth,
+    });
   }
 
   // ── Phrase Learning (B3) ───────────────────────────────────────

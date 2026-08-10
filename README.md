@@ -122,6 +122,13 @@ python scripts/export_for_chrome.py
 
 ```bash
 pytest
+node --test chrome-extension/test/*.test.js
+```
+
+Regenerate the Python↔JS ranking parity fixture (documents weight drift until T1.5):
+
+```bash
+python scripts/generate_parity_fixture.py
 ```
 
 ## Project Structure
@@ -130,12 +137,15 @@ pytest
 chrome-extension/           # Chrome extension (Manifest V3)
 ├── manifest.json           # Extension manifest
 ├── background.js           # Service worker for global state sync
-├── content.js              # Input handling, search, ranking, UI
+├── engine.js               # Pure search/ranking/phrase helpers (Node-testable)
+├── content.js              # Input handling, UI, chrome.* wiring
 ├── style.css               # Overlay styling
+├── test/                   # Node built-in test runner (node --test)
 └── data/                   # Exported JSON data files
     ├── strokes.json        # Sorted [sequence, char, freq] array
     ├── phrases.json        # Phrase dict indexed by first char
     ├── bigrams.json        # Bigram model {char1: {char2: score}}
+    ├── trigrams.json       # Trigram model {p2: {p1: {char: score}}}
     └── cantonese_freq.json # Cantonese frequency overrides
 
 src/stroke_input/           # Python engine library

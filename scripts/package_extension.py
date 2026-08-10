@@ -27,9 +27,14 @@ DEFAULT_OUTPUT = ROOT / "stroke-input-extension.zip"
 EXCLUDE = {
     "STORE_LISTING.md",
 }
+EXCLUDE_DIR_PARTS = {
+    "test",
+    "screenshots",
+}
 
 REQUIRED_FILES = [
     "manifest.json",
+    "engine.js",
     "content.js",
     "style.css",
     "data/strokes.json",
@@ -105,6 +110,8 @@ def build_zip(output: Path) -> None:
                 continue
             rel = file_path.relative_to(EXT_DIR)
             if rel.name in EXCLUDE:
+                continue
+            if any(part in EXCLUDE_DIR_PARTS for part in rel.parts):
                 continue
             zf.write(file_path, rel)
             count += 1

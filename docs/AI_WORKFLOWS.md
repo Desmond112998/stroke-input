@@ -14,9 +14,10 @@ The package requires Python 3.11+ and uses `msgpack` as the runtime dependency.
 
 ```powershell
 pytest
+node --test chrome-extension/test/*.test.js
 ```
 
-Use targeted tests while iterating, then run the full suite before finishing Python behavior changes.
+Use targeted tests while iterating, then run the full suite before finishing Python behavior changes. JS pure helpers live in `chrome-extension/engine.js` and are covered by the Node built-in test runner (no extra dependencies).
 
 ## Refresh data
 
