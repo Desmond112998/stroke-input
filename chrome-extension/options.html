@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>筆畫輸入法設定</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1a1a1a;
+      --muted: #5c6370;
+      --accent: #2563eb;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    main {
+      max-width: 480px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 1.25rem;
+      margin: 0 0 4px;
+    }
+    p.lead {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .field {
+      margin-bottom: 18px;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #e5e7eb;
+      color: var(--text);
+    }
+    #status {
+      margin-top: 14px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>筆畫輸入法設定</h1>
+    <p class="lead">設定會即時同步到所有分頁。</p>
+
+    <div class="field">
+      <label for="toggleKey">開關按鍵</label>
+      <input id="toggleKey" type="text" maxlength="2" spellcheck="false" />
+      <p class="hint">預設係反引號 <kbd>`</kbd>。撳一下輸入框再撳鍵盤上想用嘅鍵即可。</p>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <input id="interceptPassword" type="checkbox" />
+        <label for="interceptPassword" style="margin:0;font-weight:500">喺密碼欄啟用筆畫輸入</label>
+      </div>
+      <p class="hint">預設關閉，避免密碼欄被攔截。</p>
+    </div>
+
+    <div class="row">
+      <button id="save" type="button">儲存</button>
+      <button id="reset" type="button" class="secondary">還原預設</button>
+    </div>
+    <div id="status"></div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

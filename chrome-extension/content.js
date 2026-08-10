@@ -9,7 +9,14 @@
   const STROKE_KEYS = { j: 1, k: 2, l: 3, u: 4, i: 5, o: 6 };
   const STROKE_SYMBOLS = { 1: "一", 2: "丨", 3: "丿", 4: "丶", 5: "乙", 6: "＊" };
   const PAGE_SIZE = 9;
-  const TOGGLE_KEY = "`"; // backtick to toggle on/off
+  const DEFAULT_SETTINGS = Object.freeze({
+    toggleKey: "`",
+    interceptPassword: false,
+  });
+  let settings = {
+    toggleKey: DEFAULT_SETTINGS.toggleKey,
+    interceptPassword: DEFAULT_SETTINGS.interceptPassword,
+  };
 
   // Pure helpers live in engine.js (loaded before this script).
   const Engine = globalThis.StrokeInputEngine;
@@ -255,7 +262,7 @@
       <div id="stroke-input-candidates"></div>
       <div id="stroke-input-phrases"></div>
       <div id="stroke-input-page"></div>
-      <div id="stroke-input-status">筆畫輸入法 | \` 開關 | Shift 中英切換</div>
+      <div id="stroke-input-status">筆畫輸入法 · 選項頁可改開關鍵</div>
     `;
     document.body.appendChild(overlay);
 
@@ -278,6 +285,14 @@
   }
 
   // ── UI Rendering ───────────────────────────────────────────────
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
   function isTrigramDriven(record) {
     // A candidate is "trigram-driven" if trigram score > 0 for current context
     if (!prevSelectedChar || !lastSelectedChar) return false;
@@ -305,7 +320,7 @@
     const statusEl = overlay.querySelector("#stroke-input-status");
     statusEl.innerHTML =
       `<span class="stroke-mode-badge ${chineseMode ? "cn" : "en"}">${modeLabel}</span> ` +
-      `<kbd>\`</kbd> 開關 · <kbd>Shift</kbd> 中英 · <kbd>◀▶</kbd> 選字 · <kbd>▲▼</kbd> 翻頁`;
+      `<kbd>${escapeHtml(settings.toggleKey)}</kbd> 開關 · <kbd>Shift</kbd> 中英 · <kbd>◀▶</kbd> 選字 · <kbd>▲▼</kbd> 翻頁`;
 
     if (phraseMode && phraseList.length > 0) {
       candidatesEl.innerHTML = "";
@@ -353,21 +368,43 @@
 
     targetElement.focus();
 
-    // For contenteditable elements
+    // For contenteditable elements — execCommand keeps native undo
     if (targetElement.isContentEditable) {
       document.execCommand("insertText", false, text);
       return;
     }
 
-    // For input/textarea
-    const start = targetElement.selectionStart;
-    const end = targetElement.selectionEnd;
-    const val = targetElement.value;
-    targetElement.value = val.slice(0, start) + text + val.slice(end);
-    targetElement.selectionStart = targetElement.selectionEnd = start + text.length;
+    // For input/textarea — prefer setRangeText; fall back to native setter
+    // so React/Vue controlled inputs observe the change.
+    const start = targetElement.selectionStart ?? targetElement.value.length;
+    const end = targetElement.selectionEnd ?? start;
 
-    // Fire input event so frameworks (React etc.) pick up the change
-    targetElement.dispatchEvent(new Event("input", { bubbles: true }));
+    if (typeof targetElement.setRangeText === "function") {
+      targetElement.setRangeText(text, start, end, "end");
+    } else {
+      const proto =
+        targetElement.tagName === "TEXTAREA"
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      const next =
+        targetElement.value.slice(0, start) + text + targetElement.value.slice(end);
+      if (setter) {
+        setter.call(targetElement, next);
+      } else {
+        targetElement.value = next;
+      }
+      targetElement.selectionStart = targetElement.selectionEnd = start + text.length;
+    }
+
+    targetElement.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        cancelable: false,
+        inputType: "insertText",
+        data: text,
+      })
+    );
   }
 
   // ── Selection Handlers ─────────────────────────────────────────
@@ -418,6 +455,7 @@
       // Normalize to [[phrase, score]] format for existing render code
       phraseList = merged.map(p => [p.phrase, p.score]);
       phrasePage = 0;
+      highlightIdx = 0;
     }
     render();
   }
@@ -457,9 +495,34 @@
     if (tag === "TEXTAREA") return true;
     if (tag === "INPUT") {
       const type = (el.type || "").toLowerCase();
-      return ["text", "search", "url", "email", "password", ""].includes(type);
+      const allowed = ["text", "search", "url", "email", ""];
+      if (settings.interceptPassword) allowed.push("password");
+      return allowed.includes(type);
     }
     return false;
+  }
+
+  function hasComposition() {
+    return strokeSeq.length > 0 || phraseMode || candidates.length > 0 || phraseList.length > 0;
+  }
+
+  function applySettings(raw) {
+    if (!raw || typeof raw !== "object") return;
+    if (typeof raw.toggleKey === "string" && raw.toggleKey.length > 0) {
+      settings.toggleKey = raw.toggleKey;
+    }
+    if (typeof raw.interceptPassword === "boolean") {
+      settings.interceptPassword = raw.interceptPassword;
+    }
+  }
+
+  function loadSettings() {
+    try {
+      chrome.storage.local.get(["imeSettings"], (data) => {
+        if (chrome.runtime.lastError) return;
+        applySettings(data.imeSettings);
+      });
+    } catch (e) {}
   }
 
   function handleKeyDown(e) {
@@ -475,8 +538,11 @@
       shiftUsedWithOther = true;
     }
 
-    // Toggle with backtick
-    if (e.key === TOGGLE_KEY && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    // Never steal modified shortcuts (Ctrl/Cmd/Alt + key)
+    const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
+
+    // Toggle IME on/off (configurable; default backtick)
+    if (e.key === settings.toggleKey && !hasModifier) {
       e.preventDefault();
       e.stopPropagation();
       active = !active;
@@ -484,7 +550,9 @@
         loadData();
         chineseMode = true;
         overlay.classList.add("active");
-        targetElement = document.activeElement;
+        targetElement = isTextInput(document.activeElement)
+          ? document.activeElement
+          : targetElement;
       } else {
         overlay.classList.remove("active");
         resetInputState();
@@ -504,8 +572,10 @@
 
     const key = e.key.toLowerCase();
 
-    // Stroke keys
+    // Stroke keys — only when focus is in a text field, never with modifiers
     if (STROKE_KEYS[key] !== undefined) {
+      if (hasModifier) return;
+      if (!isTextInput(document.activeElement)) return;
       e.preventDefault();
       e.stopPropagation();
       if (phraseMode) {
@@ -518,9 +588,10 @@
       return;
     }
 
-    // Number keys 1-9
-    if (e.key >= "1" && e.key <= "9" && !e.ctrlKey && !e.altKey) {
-      const num = parseInt(e.key) - 1;
+    // Number keys 1-9 — select candidate/phrase (block Cmd/Ctrl/Alt)
+    if (e.key >= "1" && e.key <= "9") {
+      if (hasModifier) return;
+      const num = parseInt(e.key, 10) - 1;
       if (phraseMode && phraseList.length > 0) {
         e.preventDefault();
         e.stopPropagation();
@@ -557,8 +628,9 @@
       return;
     }
 
-    // Escape
+    // Escape — only intercept when there is an active composition
     if (e.key === "Escape") {
+      if (!hasComposition()) return;
       e.preventDefault();
       e.stopPropagation();
       resetInputState();
@@ -619,29 +691,29 @@
       return;
     }
 
-    // ArrowDown: next page
+    // ArrowDown: next page (keep first candidate highlighted)
     if (e.key === "ArrowDown" && hasCandidates) {
       e.preventDefault();
       e.stopPropagation();
       if (phraseMode) {
         const total = Math.ceil(phraseList.length / PAGE_SIZE);
-        if (phrasePage < total - 1) { phrasePage++; highlightIdx = -1; }
+        if (phrasePage < total - 1) { phrasePage++; highlightIdx = 0; }
       } else {
         const total = Math.ceil(candidates.length / PAGE_SIZE);
-        if (page < total - 1) { page++; highlightIdx = -1; }
+        if (page < total - 1) { page++; highlightIdx = 0; }
       }
       render();
       return;
     }
 
-    // ArrowUp: previous page
+    // ArrowUp: previous page (keep first candidate highlighted)
     if (e.key === "ArrowUp" && hasCandidates) {
       e.preventDefault();
       e.stopPropagation();
       if (phraseMode) {
-        if (phrasePage > 0) { phrasePage--; highlightIdx = -1; }
+        if (phrasePage > 0) { phrasePage--; highlightIdx = 0; }
       } else {
-        if (page > 0) { page--; highlightIdx = -1; }
+        if (page > 0) { page--; highlightIdx = 0; }
       }
       render();
       return;
@@ -659,24 +731,27 @@
       return;
     }
 
-    // Page Down / Space
-    if (e.key === "PageDown" || e.key === " ") {
+    // Space = commit highlighted (or unique) candidate; never just "page"
+    if (e.key === " ") {
       if (candidates.length === 0 && phraseList.length === 0) return;
       e.preventDefault();
       e.stopPropagation();
 
-      // C1: Auto-commit on unique candidate
-      if (e.key === " " && candidates.length === 1 && !phraseMode) {
+      if (candidates.length === 1 && !phraseMode) {
         selectCandidate(0);
         return;
       }
-      // Space on highlighted → select
-      if (e.key === " " && highlightIdx >= 0) {
-        if (phraseMode) selectPhrase(highlightIdx);
-        else selectCandidate(highlightIdx);
-        return;
-      }
-      // Otherwise: next page
+      const idx = highlightIdx >= 0 ? highlightIdx : 0;
+      if (phraseMode) selectPhrase(idx);
+      else selectCandidate(idx);
+      return;
+    }
+
+    // PageDown = next page
+    if (e.key === "PageDown") {
+      if (!hasComposition()) return;
+      e.preventDefault();
+      e.stopPropagation();
       highlightIdx = 0;
       if (phraseMode) {
         const total = Math.ceil(phraseList.length / PAGE_SIZE);
@@ -689,11 +764,12 @@
       return;
     }
 
-    // Page Up
+    // PageUp = previous page — only when composing
     if (e.key === "PageUp") {
+      if (!hasComposition()) return;
       e.preventDefault();
       e.stopPropagation();
-      highlightIdx = -1;
+      highlightIdx = 0;
       if (phraseMode) {
         if (phrasePage > 0) phrasePage--;
       } else {
@@ -741,6 +817,15 @@
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keyup", handleKeyUp, true);
 
+    loadSettings();
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local" || !changes.imeSettings) return;
+        applySettings(changes.imeSettings.newValue);
+        render();
+      });
+    } catch (e) {}
+
     // Restore global state on load
     try {
       chrome.runtime.sendMessage({ type: "getState" }, (resp) => {
@@ -760,7 +845,7 @@
       saveUserFreq();
     });
 
-    console.log("[筆畫] Stroke Input Method loaded. Press ` to toggle, Shift for 中/英.");
+    console.log("[筆畫] Stroke Input Method loaded. Toggle key and options are configurable.");
   }
 
   if (document.readyState === "loading") {

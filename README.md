@@ -16,9 +16,10 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Phrase suggestions after character selection (Cantonese collocations included)
 - Compatible with multiple stroke order standards (macOS, Nokia, Conway)
 - User frequency adaptation persisted via `chrome.storage`
-- Shift to toggle Chinese/English mode; backtick (`` ` ``) to toggle on/off
+- Shift to toggle Chinese/English mode; configurable toggle key (default backtick `` ` ``) to toggle on/off
+- Options page for toggle key and password-field interception
 - Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
-- Works with `<input>`, `<textarea>`, and `contenteditable` elements
+- Works with `<input>`, `<textarea>`, and `contenteditable` elements (password fields off by default)
 - Draggable overlay with dark glassmorphism UI
 - Global state sync across all tabs via background service worker
 - Lightweight — no special permissions, no data collection
@@ -38,17 +39,18 @@ The primary interface is a Chrome extension that works in any text field on any 
 
 | Key | Action |
 |-----|--------|
-| `` ` `` (backtick) | Toggle input method on/off |
+| Toggle key (default `` ` ``) | Toggle input method on/off (configurable in extension options) |
 | Shift | Toggle Chinese / English mode |
-| J / K / L / U / I / O | Enter strokes |
+| J / K / L / U / I / O | Enter strokes (only when a text field is focused; never with Ctrl/Cmd/Alt) |
 | 1–9 | Select candidate or phrase |
 | ◀ / ▶ | Highlight prev/next candidate |
 | ▲ / ▼ | Previous / next page |
-| Space / Page Down | Next page |
-| Page Up | Previous page |
+| Space | Confirm highlighted candidate (or the only candidate) |
+| Page Down | Next page |
+| Page Up | Previous page (only while composing) |
 | Enter | Confirm highlighted candidate |
 | Backspace | Remove last stroke (or dismiss phrases) |
-| Escape | Clear all strokes |
+| Escape | Clear composition (only while composing; page Escape otherwise) |
 
 ### Installation
 
