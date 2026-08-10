@@ -197,17 +197,17 @@ def main() -> None:
     records = parse_stroke_data(RAW_FILE, rankings)
     print(f"  Parsed {len(records):,} characters")
 
-    # Verify 你
+    # Verify 你 (Conway sequence; historically mis-documented as 3235354)
     for r in records:
         if r.character == '你':
-            print(f"  Verification: 你 = {r.stroke_sequence} (expected [3,2,3,5,3,5,4])")
+            print(f"  Verification: 你 = {r.stroke_sequence} (expected [3, 2, 3, 5, 2, 3, 4])")
             break
 
     from stroke_input.data.serializer import save_msgpack
     save_msgpack(records, DB_FILE)
     print(f"  Saved database: {DB_FILE}")
 
-    print("\nDone! You can now run the app.")
+    print("\nDone! Stroke database ready for export.")
 
 
 if __name__ == "__main__":

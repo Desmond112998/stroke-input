@@ -152,7 +152,7 @@ chrome-extension/           # Chrome extension (Manifest V3)
 
 src/stroke_input/           # Python engine library
 ├── config/                 # Configuration and constants
-├── data/                   # Data models, parsers, phrase loader, serializer
+├── data/                   # Data models, phrase loader, serializer, n-gram
 ├── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
 ├── gui/                    # Desktop GUI components (PySide6)
 └── output/                 # Character output (keyboard simulation / clipboard)
