@@ -24,21 +24,28 @@ logger = logging.getLogger(__name__)
 
 def _record_to_dict(record: CharacterRecord) -> dict:
     """Convert a CharacterRecord to a plain dict for serialization."""
-    return {
+    d = {
         "character": record.character,
         "stroke_sequence": record.stroke_sequence,
         "stroke_count": record.stroke_count,
         "frequency": record.frequency,
     }
+    if record.script_flag:
+        d["script_flag"] = record.script_flag
+    return d
 
 
 def _dict_to_record(d: dict) -> CharacterRecord:
-    """Convert a plain dict back to a CharacterRecord."""
+    """Convert a plain dict back to a CharacterRecord.
+
+    Older databases without ``script_flag`` default to ``""`` (shared).
+    """
     return CharacterRecord(
         character=d["character"],
         stroke_sequence=list(d["stroke_sequence"]),
         stroke_count=d["stroke_count"],
         frequency=float(d["frequency"]),
+        script_flag=str(d.get("script_flag", "") or ""),
     )
 
 

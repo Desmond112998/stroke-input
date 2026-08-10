@@ -5,7 +5,7 @@
  * - Browser content script: attaches to globalThis.StrokeInputEngine
  * - Node tests: module.exports = { ... }
  *
- * No DOM / chrome.* APIs. All state is passed in via context objects.
+ * Ranking defaults match ``stroke_input.config.ranking`` / ranking_config.json.
  */
 (function (root, factory) {
   "use strict";
@@ -17,48 +17,72 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  /** Default ranking weights used by the Chrome extension runtime. */
-  const DEFAULT_WEIGHTS = Object.freeze({
-    staticFreq: 0.30,
-    userFreq: 0.25,
+  /** Defaults mirrored from src/stroke_input/config/ranking.py */
+  const BUILTIN_WEIGHTS = Object.freeze({
+    staticFreq: 0.35,
+    userFreq: 0.20,
     bigram: 0.15,
     trigram: 0.15,
     recency: 0.10,
     position: 0.05,
   });
 
-  const USER_FREQ_CAP = 50;
-  const RECENCY_TAU_SEC = 30 * 86400;
+  let activeWeights = Object.assign({}, BUILTIN_WEIGHTS);
+  let USER_FREQ_CAP = 100;
+  let RECENCY_TAU_SEC = 30 * 86400;
+  let TRADITIONAL_BOOST = 0.05;
+  let TRIGRAM_BADGE_MIN = 0.02;
+
   const BEAM_WIDTH = 5;
   const BEAM_DEPTH = 3;
   const BEAM_MIN_PROB = 1e-5;
   const BEAM_MAX_RESULTS = 9;
 
   /**
-   * Composite ranking score for a stroke record.
-   *
-   * @param {[string, string, number]} record  [seq, char, staticFreq]
-   * @param {object} ctx
-   * @param {Record<string, number>} [ctx.userFreq]
-   * @param {Record<string, number>} [ctx.userTimestamps]  Unix seconds
-   * @param {Record<string, Record<string, number[]>>} [ctx.userPositions]
-   * @param {number[]} [ctx.strokeSeq]
-   * @param {string} [ctx.lastSelectedChar]
-   * @param {string} [ctx.prevSelectedChar]
-   * @param {Record<string, Record<string, number>>} [ctx.bigrams]
-   * @param {Record<string, Record<string, Record<string, number>>>} [ctx.trigrams]
-   * @param {typeof DEFAULT_WEIGHTS} [ctx.weights]
-   * @param {number} [ctx.nowSec]  Unix seconds; defaults to Date.now()/1000
-   * @returns {number}
+   * Apply ranking_config.json (or partial overrides).
+   * @param {object} cfg
+   */
+  function setConfig(cfg) {
+    if (!cfg || typeof cfg !== "object") return;
+    if (cfg.weights && typeof cfg.weights === "object") {
+      activeWeights = Object.assign({}, BUILTIN_WEIGHTS, cfg.weights);
+    }
+    if (typeof cfg.userFreqCap === "number") USER_FREQ_CAP = cfg.userFreqCap;
+    if (typeof cfg.recencyTauDays === "number") {
+      RECENCY_TAU_SEC = cfg.recencyTauDays * 86400;
+    }
+    if (typeof cfg.traditionalBoost === "number") {
+      TRADITIONAL_BOOST = cfg.traditionalBoost;
+    }
+    if (typeof cfg.trigramBadgeMinContribution === "number") {
+      TRIGRAM_BADGE_MIN = cfg.trigramBadgeMinContribution;
+    }
+  }
+
+  function getConfig() {
+    return {
+      weights: Object.assign({}, activeWeights),
+      userFreqCap: USER_FREQ_CAP,
+      recencyTauSec: RECENCY_TAU_SEC,
+      traditionalBoost: TRADITIONAL_BOOST,
+      trigramBadgeMinContribution: TRIGRAM_BADGE_MIN,
+    };
+  }
+
+  /**
+   * @param {Array} record  [seq, char, staticFreq, scriptTag?]
+   *   scriptTag optional: "t" (trad-only) | "s" (simp-only)
    */
   function computeScore(record, ctx) {
     ctx = ctx || {};
-    const weights = ctx.weights || DEFAULT_WEIGHTS;
+    const weights = ctx.weights || activeWeights;
     const char = record[1];
     const staticFreq = record[2];
+    const scriptTag = record[3];
 
     const userFreq = ctx.userFreq || {};
-    const userScore = Math.min((userFreq[char] || 0) / USER_FREQ_CAP, 1.0);
+    const cap = ctx.userFreqCap !== undefined ? ctx.userFreqCap : USER_FREQ_CAP;
+    const userScore = Math.min((userFreq[char] || 0) / cap, 1.0);
 
     let bigramScore = 0;
     const last = ctx.lastSelectedChar || "";
@@ -78,8 +102,9 @@
     const ts = (ctx.userTimestamps || {})[char];
     if (ts) {
       const nowSec = ctx.nowSec !== undefined ? ctx.nowSec : Date.now() / 1000;
+      const tau = ctx.recencyTauSec !== undefined ? ctx.recencyTauSec : RECENCY_TAU_SEC;
       const deltaSec = Math.max(0, nowSec - ts);
-      recencyScore = Math.exp(-deltaSec / RECENCY_TAU_SEC);
+      recencyScore = Math.exp(-deltaSec / tau);
     }
 
     let positionScore = 0;
@@ -94,21 +119,33 @@
       }
     }
 
-    return (
+    let score =
       weights.staticFreq * staticFreq +
       weights.userFreq * userScore +
       weights.bigram * bigramScore +
       weights.trigram * trigramScore +
       weights.recency * recencyScore +
-      weights.position * positionScore
-    );
+      weights.position * positionScore;
+
+    const tradBoost =
+      ctx.traditionalBoost !== undefined ? ctx.traditionalBoost : TRADITIONAL_BOOST;
+    if (scriptTag === "t") {
+      score += tradBoost;
+    }
+    return score;
   }
 
-  /**
-   * Keep highest-frequency encoding per character.
-   * @param {Array<[string, string, number]>} results
-   * @returns {Array<[string, string, number]>}
-   */
+  function trigramContribution(record, ctx) {
+    ctx = ctx || {};
+    const weights = ctx.weights || activeWeights;
+    const char = record[1];
+    const prev = ctx.prevSelectedChar || "";
+    const last = ctx.lastSelectedChar || "";
+    const trigrams = ctx.trigrams || {};
+    if (!(prev && last && trigrams[prev] && trigrams[prev][last])) return 0;
+    return weights.trigram * (trigrams[prev][last][char] || 0);
+  }
+
   function dedup(results) {
     const seen = new Map();
     for (const r of results) {
@@ -120,14 +157,6 @@
     return Array.from(seen.values());
   }
 
-  /**
-   * Prefix search over a sorted [seq, char, freq] array.
-   *
-   * @param {number[]} prefix  stroke codes 1-6 (6 = wildcard)
-   * @param {Array<[string, string, number]>} allRecords  sorted by seq string
-   * @param {object} [ctx]  passed to computeScore for ranking
-   * @returns {Array<[string, string, number]>}
-   */
   function searchPrefix(prefix, allRecords, ctx) {
     if (!prefix || !prefix.length) return [];
     allRecords = allRecords || [];
@@ -166,15 +195,6 @@
     return unique;
   }
 
-  /**
-   * Beam-search phrase continuations from a seed character/string.
-   *
-   * @param {string} seed
-   * @param {Record<string, Record<string, number>>} bigrams
-   * @param {Record<string, Record<string, Record<string, number>>>} [trigrams]
-   * @param {{ maxDepth?: number, beamWidth?: number, maxResults?: number }} [opts]
-   * @returns {Array<{ phrase: string, score: number }>}
-   */
   function predictPhrase(seed, bigrams, trigrams, opts) {
     if (!seed) return [];
     bigrams = bigrams || {};
@@ -247,14 +267,27 @@
   }
 
   return {
-    DEFAULT_WEIGHTS,
-    USER_FREQ_CAP,
-    RECENCY_TAU_SEC,
+    DEFAULT_WEIGHTS: BUILTIN_WEIGHTS,
+    get USER_FREQ_CAP() {
+      return USER_FREQ_CAP;
+    },
+    get RECENCY_TAU_SEC() {
+      return RECENCY_TAU_SEC;
+    },
+    get TRADITIONAL_BOOST() {
+      return TRADITIONAL_BOOST;
+    },
+    get TRIGRAM_BADGE_MIN() {
+      return TRIGRAM_BADGE_MIN;
+    },
     BEAM_WIDTH,
     BEAM_DEPTH,
     BEAM_MIN_PROB,
     BEAM_MAX_RESULTS,
+    setConfig,
+    getConfig,
     computeScore,
+    trigramContribution,
     dedup,
     searchPrefix,
     predictPhrase,

@@ -21,45 +21,52 @@ describe("StrokeInputEngine.dedup", () => {
 });
 
 describe("StrokeInputEngine.computeScore", () => {
-  it("scores static frequency alone when context is empty", () => {
-    const score = Engine.computeScore(["1", "一", 0.8], {});
-    assert.ok(Math.abs(score - 0.30 * 0.8) < 1e-9);
-  });
+    it("scores static frequency alone when context is empty", () => {
+      const score = Engine.computeScore(["1", "一", 0.8], {});
+      assert.ok(Math.abs(score - Engine.DEFAULT_WEIGHTS.staticFreq * 0.8) < 1e-9);
+    });
 
-  it("applies user frequency capped at USER_FREQ_CAP", () => {
-    const low = Engine.computeScore(["1", "一", 0], {
-      userFreq: { 一: 25 },
+    it("applies user frequency capped at USER_FREQ_CAP", () => {
+      const low = Engine.computeScore(["1", "一", 0], {
+        userFreq: { 一: Engine.USER_FREQ_CAP / 2 },
+      });
+      const high = Engine.computeScore(["1", "一", 0], {
+        userFreq: { 一: Engine.USER_FREQ_CAP * 2 },
+      });
+      assert.ok(Math.abs(low - Engine.DEFAULT_WEIGHTS.userFreq * 0.5) < 1e-9);
+      assert.ok(Math.abs(high - Engine.DEFAULT_WEIGHTS.userFreq * 1.0) < 1e-9);
     });
-    const high = Engine.computeScore(["1", "一", 0], {
-      userFreq: { 一: 100 },
-    });
-    assert.ok(Math.abs(low - 0.25 * 0.5) < 1e-9);
-    assert.ok(Math.abs(high - 0.25 * 1.0) < 1e-9);
-  });
 
-  it("applies bigram and trigram context", () => {
-    const score = Engine.computeScore(["323554234", "係", 0.5], {
-      lastSelectedChar: "就",
-      prevSelectedChar: "就",
-      bigrams: { 就: { 係: 1.0 } },
-      trigrams: { 就: { 就: { 係: 0.5 } } },
+    it("applies bigram and trigram context", () => {
+      const score = Engine.computeScore(["323554234", "係", 0.5], {
+        lastSelectedChar: "就",
+        prevSelectedChar: "就",
+        bigrams: { 就: { 係: 1.0 } },
+        trigrams: { 就: { 就: { 係: 0.5 } } },
+      });
+      const w = Engine.DEFAULT_WEIGHTS;
+      const expected = w.staticFreq * 0.5 + w.bigram * 1.0 + w.trigram * 0.5;
+      assert.ok(Math.abs(score - expected) < 1e-9);
     });
-    // 0.30*0.5 + 0.15*1.0 + 0.15*0.5 = 0.15 + 0.15 + 0.075 = 0.375
-    assert.ok(Math.abs(score - 0.375) < 1e-9);
-  });
 
-  it("applies recency and position scores", () => {
-    const now = 1_700_000_000;
-    const score = Engine.computeScore(["1", "一", 0], {
-      userTimestamps: { 一: now },
-      nowSec: now,
-      strokeSeq: [1],
-      userPositions: { "1": { 一: [0, 0] } },
+    it("applies traditional boost for script tag t", () => {
+      const plain = Engine.computeScore(["1", "體", 0.5], {});
+      const boosted = Engine.computeScore(["1", "體", 0.5, "t"], {});
+      assert.ok(Math.abs(boosted - plain - Engine.TRADITIONAL_BOOST) < 1e-9);
     });
-    // recency=1.0 → 0.10; position=1/(1+0)=1 → 0.05
-    assert.ok(Math.abs(score - 0.15) < 1e-9);
+
+    it("applies recency and position scores", () => {
+      const now = 1_700_000_000;
+      const score = Engine.computeScore(["1", "一", 0], {
+        userTimestamps: { 一: now },
+        nowSec: now,
+        strokeSeq: [1],
+        userPositions: { "1": { 一: [0, 0] } },
+      });
+      const w = Engine.DEFAULT_WEIGHTS;
+      assert.ok(Math.abs(score - (w.recency * 1.0 + w.position * 1.0)) < 1e-9);
+    });
   });
-});
 
 describe("StrokeInputEngine.searchPrefix", () => {
   const records = [

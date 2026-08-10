@@ -41,6 +41,10 @@ REQUIRED_FILES = [
     "style.css",
     "data/strokes.json",
     "data/phrases.json",
+    "data/bigrams.json",
+    "data/trigrams.json",
+    "data/cantonese_freq.json",
+    "data/ranking_config.json",
 ]
 
 

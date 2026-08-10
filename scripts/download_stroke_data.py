@@ -42,7 +42,18 @@ def download_file(name: str, url: str) -> None:
 
 
 def parse_ranking(path: Path) -> dict[str, float]:
-    """Parse ranking-traditional.txt into a character -> frequency dict."""
+    """Parse ranking-traditional.txt into a character → frequency dict.
+
+    Uses a Zipf–Mandelbrot mapping (not linear rank) so head characters
+    dominate and mid-tail scores decay quickly:
+
+        raw_i = 1 / (i + ZIPF_S) ** ZIPF_A
+        freq_i = max(ZIPF_FLOOR, raw_i / raw_0)
+
+    See ``stroke_input.config.ranking`` for the constants.
+    """
+    from stroke_input.config.ranking import ZIPF_A, ZIPF_FLOOR, ZIPF_S
+
     if not path.exists():
         return {}
     rankings: dict[str, float] = {}
@@ -52,14 +63,16 @@ def parse_ranking(path: Path) -> dict[str, float]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Each line is just characters, ranked by frequency
         for ch in line:
             if '\u4e00' <= ch <= '\u9fff' or '\u3400' <= ch <= '\u4dbf' or ch == '〇':
                 chars.append(ch)
-    # Assign frequency scores: higher rank = higher score
     total = len(chars)
+    if total == 0:
+        return {}
+    raw0 = 1.0 / ((0 + ZIPF_S) ** ZIPF_A)
     for i, ch in enumerate(chars):
-        rankings[ch] = max(0.01, 1.0 - (i / total))
+        raw = 1.0 / ((i + ZIPF_S) ** ZIPF_A)
+        rankings[ch] = max(ZIPF_FLOOR, raw / raw0)
     return rankings
 
 
@@ -146,8 +159,14 @@ def parse_stroke_data(path: Path, rankings: dict[str, float]) -> list:
         if not codepoint_str.startswith('U+'):
             continue
 
-        # Extract character (remove markers like ^, *)
-        character = char_field.rstrip('^*')
+        # Extract character and Conway script markers (^ traditional-only, * simplified-only)
+        char_field_raw = char_field
+        script_flag = ""
+        if char_field_raw.endswith("^"):
+            script_flag = "trad"
+        elif char_field_raw.endswith("*"):
+            script_flag = "simp"
+        character = char_field_raw.rstrip("^*")
         if not character or len(character) != 1:
             continue
 
@@ -172,6 +191,7 @@ def parse_stroke_data(path: Path, rankings: dict[str, float]) -> list:
                 stroke_sequence=stroke_sequence,
                 stroke_count=len(stroke_sequence),
                 frequency=freq,
+                script_flag=script_flag,
             ))
 
     return records

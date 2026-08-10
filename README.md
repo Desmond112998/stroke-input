@@ -144,10 +144,11 @@ chrome-extension/           # Chrome extension (Manifest V3)
 ├── style.css               # Overlay styling
 ├── test/                   # Node built-in test runner (node --test)
 └── data/                   # Exported JSON data files
-    ├── strokes.json        # Sorted [sequence, char, freq] array
+    ├── strokes.json        # Sorted [sequence, char, freq, scriptTag?]
     ├── phrases.json        # Phrase dict indexed by first char
     ├── bigrams.json        # Bigram model {char1: {char2: score}}
     ├── trigrams.json       # Trigram model {p2: {p1: {char: score}}}
+    ├── ranking_config.json # Shared ranking weights (Python↔JS)
     └── cantonese_freq.json # Cantonese frequency overrides
 
 src/stroke_input/           # Python engine library
