@@ -8,14 +8,38 @@
   // ── Constants ──────────────────────────────────────────────────
   const STROKE_KEYS = { j: 1, k: 2, l: 3, u: 4, i: 5, o: 6 };
   const STROKE_SYMBOLS = { 1: "一", 2: "丨", 3: "丿", 4: "丶", 5: "乙", 6: "＊" };
+  const NUMPAD_STROKE_CODES = {
+    Numpad1: 1,
+    Numpad2: 2,
+    Numpad3: 3,
+    Numpad4: 4,
+    Numpad5: 5,
+    Numpad6: 6,
+  };
+  const CN_PUNCTUATION = {
+    ",": "，",
+    ".": "。",
+    "?": "？",
+    "!": "！",
+    ";": "；",
+    ":": "：",
+  };
   const PAGE_SIZE = 9;
   const DEFAULT_SETTINGS = Object.freeze({
     toggleKey: "`",
     interceptPassword: false,
+    wubiHuaMode: false,
+    showAssociations: true,
+    numpadStrokes: false,
+    chinesePunctuation: true,
   });
   let settings = {
     toggleKey: DEFAULT_SETTINGS.toggleKey,
     interceptPassword: DEFAULT_SETTINGS.interceptPassword,
+    wubiHuaMode: DEFAULT_SETTINGS.wubiHuaMode,
+    showAssociations: DEFAULT_SETTINGS.showAssociations,
+    numpadStrokes: DEFAULT_SETTINGS.numpadStrokes,
+    chinesePunctuation: DEFAULT_SETTINGS.chinesePunctuation,
   };
 
   // Pure helpers live in engine.js (loaded before this script).
@@ -32,7 +56,9 @@
   let chineseMode = true; // true = 中文, false = 英文 (Shift toggles)
   let strokeSeq = [];
   let allRecords = []; // sorted [seq, char, freq]
+  let wubiRecords = []; // 頭四尾一 index (optional)
   let phrases = {};    // first_char -> [[phrase, freq], ...]
+  let associationSet = new Set(); // chars injected as mid-typing associations
   let bigrams = {};    // char -> {char2: score, ...}
   let trigrams = {};   // prev2 -> {prev1 -> {char: score}} — new
   let candidates = [];
@@ -61,6 +87,8 @@
   let dragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
+  let overlayManualPosition = false;
+  let dragMoved = false;
 
   // ── User Frequency Persistence (v2 format) ────────────────────
   function loadUserFreq() {
@@ -167,17 +195,20 @@
   async function loadData() {
     if (dataLoaded) return;
     try {
-      const [strokeResp, phraseResp, bigramResp, trigramResp, rankingResp] = await Promise.all([
-        fetch(chrome.runtime.getURL("data/strokes.json")),
-        fetch(chrome.runtime.getURL("data/phrases.json")),
-        fetch(chrome.runtime.getURL("data/bigrams.json")),
-        fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
-        fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
-      ]);
+      const [strokeResp, phraseResp, bigramResp, trigramResp, rankingResp, wubiResp] =
+        await Promise.all([
+          fetch(chrome.runtime.getURL("data/strokes.json")),
+          fetch(chrome.runtime.getURL("data/phrases.json")),
+          fetch(chrome.runtime.getURL("data/bigrams.json")),
+          fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
+          fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
+          fetch(chrome.runtime.getURL("data/strokes_wubi.json")).catch(() => null),
+        ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
       bigrams = await bigramResp.json();
       trigrams = trigramResp ? await trigramResp.json() : {};
+      wubiRecords = wubiResp ? await wubiResp.json() : [];
       if (rankingResp && Engine) {
         try {
           Engine.setConfig(await rankingResp.json());
@@ -187,9 +218,8 @@
       loadUserFreq();
       console.log(
         `[筆畫] Loaded ${allRecords.length} characters, ` +
-        `${Object.keys(phrases).length} phrase buckets, ` +
-        `${Object.keys(bigrams).length} bigram entries, ` +
-        `${Object.keys(trigrams).length} trigram p2-contexts`
+        `${wubiRecords.length} wubi entries, ` +
+        `${Object.keys(phrases).length} phrase buckets`
       );
     } catch (e) {
       console.error("[筆畫] Failed to load data:", e);
@@ -215,7 +245,40 @@
   }
 
   function searchPrefix(prefix) {
-    return Engine.searchPrefix(prefix, allRecords, rankingContext());
+    const secondary = settings.wubiHuaMode ? wubiRecords : null;
+    let results = Engine.searchMerged(
+      prefix,
+      allRecords,
+      secondary,
+      rankingContext(),
+      { fuzzy: true }
+    );
+
+    // Mid-typing associations (macOS-style): inject top bigram followers at slots 2–3
+    associationSet = new Set();
+    if (
+      settings.showAssociations &&
+      lastSelectedChar &&
+      results.length > 0
+    ) {
+      const assoc = Engine.associationChars(lastSelectedChar, bigrams, 2);
+      const existing = new Set(results.map((r) => r[1]));
+      const injected = [];
+      for (const ch of assoc) {
+        if (existing.has(ch)) continue;
+        // Synthetic record: empty seq, char, bigram score as freq
+        const score =
+          (bigrams[lastSelectedChar] && bigrams[lastSelectedChar][ch]) || 0.5;
+        injected.push(["", ch, score, null, "assoc"]);
+        associationSet.add(ch);
+      }
+      if (injected.length) {
+        const head = results.slice(0, 1);
+        const rest = results.slice(1);
+        results = head.concat(injected, rest);
+      }
+    }
+    return results;
   }
 
   function predictPhrase(seed, maxDepth) {
@@ -272,10 +335,11 @@
     `;
     document.body.appendChild(overlay);
 
-    // Dragging
+    // Dragging — after a real drag, keep the manual position (T2.5)
     overlay.addEventListener("mousedown", (e) => {
       if (e.target.closest(".stroke-candidate, .stroke-phrase")) return;
       dragging = true;
+      dragMoved = false;
       const rect = overlay.getBoundingClientRect();
       dragOffsetX = e.clientX - rect.left;
       dragOffsetY = e.clientY - rect.top;
@@ -283,11 +347,69 @@
     });
     document.addEventListener("mousemove", (e) => {
       if (!dragging) return;
+      dragMoved = true;
       overlay.style.left = (e.clientX - dragOffsetX) + "px";
       overlay.style.top = (e.clientY - dragOffsetY) + "px";
       overlay.style.right = "auto";
     });
-    document.addEventListener("mouseup", () => { dragging = false; });
+    document.addEventListener("mouseup", () => {
+      if (dragging && dragMoved) overlayManualPosition = true;
+      dragging = false;
+    });
+  }
+
+  function clampOverlayPosition(left, top) {
+    const margin = 8;
+    const ow = overlay.offsetWidth || 340;
+    const oh = overlay.offsetHeight || 120;
+    const maxLeft = Math.max(margin, window.innerWidth - ow - margin);
+    const maxTop = Math.max(margin, window.innerHeight - oh - margin);
+    return {
+      left: Math.min(Math.max(margin, left), maxLeft),
+      top: Math.min(Math.max(margin, top), maxTop),
+    };
+  }
+
+  /** Position overlay near the caret / text field (unless user dragged it). */
+  function positionOverlayNearCaret() {
+    if (!overlay || !active || overlayManualPosition || dragging) return;
+    const el = targetElement && isTextInput(targetElement)
+      ? targetElement
+      : (isTextInput(document.activeElement) ? document.activeElement : null);
+    if (!el) return;
+
+    let anchor = null;
+    if (el.isContentEditable) {
+      try {
+        const sel = document.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0).getBoundingClientRect();
+          if (r && (r.width > 0 || r.height > 0 || r.top !== 0 || r.left !== 0)) {
+            anchor = r;
+          }
+        }
+      } catch (e) {}
+    }
+    if (!anchor) {
+      try {
+        if (typeof el.getBoundingClientRect === "function") {
+          anchor = el.getBoundingClientRect();
+        }
+      } catch (e) {}
+    }
+    if (!anchor) return;
+
+    const margin = 8;
+    let left = anchor.left;
+    let top = anchor.bottom + margin;
+    const oh = overlay.offsetHeight || 120;
+    if (top + oh > window.innerHeight - margin) {
+      top = Math.max(margin, anchor.top - oh - margin);
+    }
+    const pos = clampOverlayPosition(left, top);
+    overlay.style.left = pos.left + "px";
+    overlay.style.top = pos.top + "px";
+    overlay.style.right = "auto";
   }
 
   // ── UI Rendering ───────────────────────────────────────────────
@@ -343,13 +465,24 @@
       const pageItems = candidates.slice(start, start + PAGE_SIZE);
       candidatesEl.innerHTML = pageItems
         .map((r, i) => {
-          const badge = isTrigramDriven(r) ? '<span class="tri-badge" title="觸發：上文脈絡">★</span>' : "";
-          return `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${badge}${r[1]}</span>`;
+          const badges = [];
+          if (isTrigramDriven(r)) {
+            badges.push('<span class="tri-badge" title="觸發：上文脈絡">★</span>');
+          }
+          if (r[4] === "assoc" || associationSet.has(r[1])) {
+            badges.push('<span class="assoc-badge" title="關聯字">聯</span>');
+          }
+          if (r.isExact === false) {
+            badges.push('<span class="fuzzy-badge" title="模糊匹配">∼</span>');
+          }
+          return `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${badges.join("")}${r[1]}</span>`;
         })
         .join("");
       const totalPages = Math.ceil(candidates.length / PAGE_SIZE);
       pageEl.textContent = totalPages > 1 ? `← ${page + 1}/${totalPages} →` : "";
     }
+
+    positionOverlayNearCaret();
   }
 
   function refreshCandidates() {
@@ -520,6 +653,18 @@
     if (typeof raw.interceptPassword === "boolean") {
       settings.interceptPassword = raw.interceptPassword;
     }
+    if (typeof raw.wubiHuaMode === "boolean") {
+      settings.wubiHuaMode = raw.wubiHuaMode;
+    }
+    if (typeof raw.showAssociations === "boolean") {
+      settings.showAssociations = raw.showAssociations;
+    }
+    if (typeof raw.numpadStrokes === "boolean") {
+      settings.numpadStrokes = raw.numpadStrokes;
+    }
+    if (typeof raw.chinesePunctuation === "boolean") {
+      settings.chinesePunctuation = raw.chinesePunctuation;
+    }
   }
 
   function loadSettings() {
@@ -555,6 +700,7 @@
       if (active) {
         loadData();
         chineseMode = true;
+        overlayManualPosition = false;
         overlay.classList.add("active");
         targetElement = isTextInput(document.activeElement)
           ? document.activeElement
@@ -577,6 +723,40 @@
     }
 
     const key = e.key.toLowerCase();
+
+    // Optional numpad stroke entry (T2.6) — number row still selects candidates
+    if (
+      settings.numpadStrokes &&
+      NUMPAD_STROKE_CODES[e.code] !== undefined &&
+      !hasModifier
+    ) {
+      if (!isTextInput(document.activeElement)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (phraseMode) {
+        phraseMode = false;
+        phraseList = [];
+        phrasePage = 0;
+      }
+      strokeSeq.push(NUMPAD_STROKE_CODES[e.code]);
+      refreshCandidates();
+      return;
+    }
+
+    // Chinese punctuation when buffer empty (T2.6)
+    if (
+      settings.chinesePunctuation &&
+      !hasModifier &&
+      strokeSeq.length === 0 &&
+      !phraseMode &&
+      CN_PUNCTUATION[e.key] !== undefined
+    ) {
+      if (!isTextInput(document.activeElement)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      insertText(CN_PUNCTUATION[e.key]);
+      return;
+    }
 
     // Stroke keys — only when focus is in a text field, never with modifiers
     if (STROKE_KEYS[key] !== undefined) {
@@ -849,6 +1029,17 @@
     // Save user frequency on page unload
     window.addEventListener("beforeunload", () => {
       saveUserFreq();
+    });
+
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (active && !overlayManualPosition) positionOverlayNearCaret();
+      },
+      true
+    );
+    window.addEventListener("resize", () => {
+      if (active && !overlayManualPosition) positionOverlayNearCaret();
     });
 
     console.log("[筆畫] Stroke Input Method loaded. Toggle key and options are configurable.");

@@ -10,19 +10,22 @@ The primary interface is a Chrome extension that works in any text field on any 
 
 - Five basic strokes (J/K/L/U/I/O) plus wildcard key
 - Real-time prefix matching with binary search on a sorted stroke index
-- Composite ranking: static frequency, user adaptation, bigram context, and stroke proximity
+- Fuzzy one-stroke correction when exact matches are scarce (< 3)
+- Optional 五筆劃 (頭四尾一) short codes for characters with more than 5 strokes
+- Mid-typing association characters from bigrams (marked 聯)
+- Composite ranking: static frequency, user adaptation, bigram/trigram context, recency, position
 - Cantonese frequency boosts — common Cantonese characters (係、唔、咗、嘅、冇…) rank higher
 - Bigram model for contextual prediction (P(char₂ | char₁) from phrase co-occurrence)
 - Phrase suggestions after character selection (Cantonese collocations included)
 - Compatible with multiple stroke order standards (macOS, Nokia, Conway)
 - User frequency adaptation persisted via `chrome.storage`
 - Shift to toggle Chinese/English mode; configurable toggle key (default backtick `` ` ``) to toggle on/off
-- Options page for toggle key and password-field interception
+- Options page: toggle key, password fields, 五筆劃, associations, numpad strokes, Chinese punctuation
 - Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
 - Works with `<input>`, `<textarea>`, and `contenteditable` elements (password fields off by default)
-- Draggable overlay with dark glassmorphism UI
+- Overlay follows the caret / text field (drag once to pin a manual position)
 - Global state sync across all tabs via background service worker
-- Lightweight — no special permissions, no data collection
+- Lightweight — no special permissions; usage stats stay in local extension storage only
 
 ### Key Mapping
 
@@ -42,6 +45,8 @@ The primary interface is a Chrome extension that works in any text field on any 
 | Toggle key (default `` ` ``) | Toggle input method on/off (configurable in extension options) |
 | Shift | Toggle Chinese / English mode |
 | J / K / L / U / I / O | Enter strokes (only when a text field is focused; never with Ctrl/Cmd/Alt) |
+| Numpad 1–6 | Same strokes when「數字鍵盤輸入筆畫」is enabled in options |
+| `,` `.` `?` `!` `;` `:` | Full-width Chinese punctuation when buffer is empty (option; default on) |
 | 1–9 | Select candidate or phrase |
 | ◀ / ▶ | Highlight prev/next candidate |
 | ▲ / ▼ | Previous / next page |
