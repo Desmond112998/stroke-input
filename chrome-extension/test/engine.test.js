@@ -196,6 +196,33 @@ describe("StrokeInputEngine.match quality", () => {
   });
 });
 
+describe("StrokeInputEngine.searchPhrasesByCode", () => {
+  const records = [
+    ["312441", "香港", 0.9],
+    ["312441", "香江", 0.3],
+    ["441312", "港香", 0.1],
+    ["111222", "一二", 0.5],
+  ];
+
+  it("finds 香港 under G6 code 312441", () => {
+    const out = Engine.searchPhrasesByCode([3, 1, 2, 4, 4, 1], records, {});
+    assert.ok(out.some((r) => r[1] === "香港" && r[4] === "phrase"));
+  });
+
+  it("supports progressive prefix match", () => {
+    const out = Engine.searchPhrasesByCode([3, 1, 2], records, { minLen: 2 });
+    assert.ok(out.some((r) => r[1] === "香港"));
+    assert.ok(!out.some((r) => r[1] === "一二"));
+  });
+
+  it("returns empty below minLen", () => {
+    assert.deepEqual(
+      Engine.searchPhrasesByCode([3], records, { minLen: 2 }),
+      []
+    );
+  });
+});
+
 describe("StrokeInputEngine.searchPrefix cap", () => {
   it("limits results to SEARCH_RESULT_CAP", () => {
     const records = [];
