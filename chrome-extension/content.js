@@ -76,8 +76,10 @@
   let userFreq = {};         // char -> count
   let userTimestamps = {};   // char -> last-selection Unix timestamp (seconds) — new
   let userPositions = {};    // strokeSeqKey -> {char -> [rank, ...]} — new
+  let userPins = {};         // strokeSeqKey -> {char: true} (T3.4 / C2)
   let userFreqDirty = false;
   let userFreqSaveTimer = null;
+  let wildcardRefreshTimer = null;
 
   // Shift-toggle tracking: detect bare Shift press (down→up with no other key)
   let shiftDown = false;
@@ -102,11 +104,13 @@
             userFreq       = stored.counts      || {};
             userTimestamps = stored.timestamps  || {};
             userPositions  = stored.positions   || {};
+            userPins       = stored.pins        || {};
           } else {
             // legacy flat format upgrade
             userFreq = stored;
             userTimestamps = {};
             userPositions  = {};
+            userPins       = {};
           }
         }
       });
@@ -116,7 +120,13 @@
   function saveUserFreq() {
     if (!userFreqDirty) return;
     try {
-      const payload = { v: 2, counts: userFreq, timestamps: userTimestamps, positions: userPositions };
+      const payload = {
+        v: 2,
+        counts: userFreq,
+        timestamps: userTimestamps,
+        positions: userPositions,
+        pins: userPins,
+      };
       chrome.storage.local.set({ userFreqV2: payload }, () => {
         if (chrome.runtime.lastError) return;
         userFreqDirty = false;
@@ -137,6 +147,9 @@
       const ranks = userPositions[seqKey][char];
       ranks.push(rank);
       if (ranks.length > MAX_RANK_HISTORY) ranks.shift();
+      if (Engine && Engine.maybeAutoPin) {
+        Engine.maybeAutoPin(seqKey, char, userPositions, userPins, 3);
+      }
     }
     userFreqDirty = true;
     // Debounce save: write at most every 5 seconds
@@ -232,6 +245,7 @@
       userFreq,
       userTimestamps,
       userPositions,
+      userPins,
       strokeSeq,
       lastSelectedChar,
       prevSelectedChar,
@@ -294,13 +308,19 @@
   function autoLearnPhrase() {
     if (consecutiveChars.length >= 2) {
       const phrase = consecutiveChars.join("");
-      // Store in userPositions (reuse structure) under special key
+      // Consumed by Engine.learnedPhrasesFor when building phrase suggestions (T3.4)
       if (!userPositions["__phrases__"]) userPositions["__phrases__"] = {};
-      userPositions["__phrases__"][phrase] = (userPositions["__phrases__"][phrase] || []);
+      if (!userPositions["__phrases__"][phrase]) {
+        userPositions["__phrases__"][phrase] = [];
+      }
       userPositions["__phrases__"][phrase].push(1);
+      if (userPositions["__phrases__"][phrase].length > MAX_RANK_HISTORY) {
+        userPositions["__phrases__"][phrase].shift();
+      }
       userFreqDirty = true;
     }
-    consecutiveChars = [];
+    // Keep the last character so the next pick can extend the learned chain
+    consecutiveChars = consecutiveChars.slice(-1);
   }
   // When Chrome reloads the extension, old content scripts remain alive.
   // Signal any previous instance to self-destruct via a custom event.
@@ -491,14 +511,27 @@
     phrasePage = 0;
     // C4: default highlight = 0 (first candidate pre-selected)
     highlightIdx = 0;
+    if (wildcardRefreshTimer) {
+      clearTimeout(wildcardRefreshTimer);
+      wildcardRefreshTimer = null;
+    }
     if (strokeSeq.length === 0) {
       candidates = [];
       page = 0;
-    } else {
+      render();
+      return;
+    }
+    const run = () => {
       candidates = searchPrefix(strokeSeq);
       page = 0;
+      render();
+    };
+    // Debounce wildcard scans (full-table regex) slightly (T3.3)
+    if (strokeSeq.includes(6)) {
+      wildcardRefreshTimer = setTimeout(run, 40);
+      return;
     }
-    render();
+    run();
   }
 
   // ── Text Insertion ─────────────────────────────────────────────
@@ -565,27 +598,31 @@
 
     // Auto-learn consecutive phrase
     consecutiveChars.push(char);
+    autoLearnPhrase();
 
     strokeSeq = [];
     candidates = [];
     page = 0;
 
     // Multi-step phrase suggestion (B5): beam-search from selected char
-    // Merge with static phrase dictionary: static phrases take precedence
+    // Merge: static dict → learned phrases → beam (no duplicates)
     const staticPhrases = (phrases[char] && phrases[char].length > 0)
       ? phrases[char].map(p => ({ phrase: p[0], score: p[1], isStatic: true }))
+      : [];
+    const learned = Engine.learnedPhrasesFor
+      ? Engine.learnedPhrasesFor(char, userPositions, 9)
       : [];
     const beamPhrases = predictPhrase(char)
       .filter(p => p.phrase.length > 1)
       .map(p => ({ ...p, isStatic: false }));
 
-    // Build merged phrase list: static first, then beam (no duplicates)
-    const seen = new Set(staticPhrases.map(p => p.phrase));
-    const merged = [...staticPhrases];
-    for (const bp of beamPhrases) {
-      if (!seen.has(bp.phrase)) {
-        seen.add(bp.phrase);
-        merged.push(bp);
+    const seen = new Set();
+    const merged = [];
+    for (const group of [staticPhrases, learned, beamPhrases]) {
+      for (const p of group) {
+        if (seen.has(p.phrase)) continue;
+        seen.add(p.phrase);
+        merged.push(p);
       }
     }
 

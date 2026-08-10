@@ -42,6 +42,10 @@
   const BEAM_DEPTH = 3;
   const BEAM_MIN_PROB = 1e-5;
   const BEAM_MAX_RESULTS = 9;
+  /** Cap scored prefix results to keep first-stroke latency bounded (T3.3). */
+  const SEARCH_RESULT_CAP = 200;
+  const WILDCARD_RE_CACHE_MAX = 256;
+  const _wildcardReCache = new Map();
 
   /**
    * Apply ranking_config.json (or partial overrides).
@@ -170,12 +174,17 @@
     let positionScore = 0;
     const strokeSeq = ctx.strokeSeq || [];
     const seqKey = strokeSeq.join("");
-    const positions = ctx.userPositions || {};
-    if (seqKey && positions[seqKey] && positions[seqKey][char]) {
-      const ranks = positions[seqKey][char];
-      if (ranks.length > 0) {
-        const avgRank = ranks.reduce((a, b) => a + b, 0) / ranks.length;
-        positionScore = 1.0 / (1.0 + avgRank);
+    const pins = ctx.userPins || {};
+    if (seqKey && pins[seqKey] && pins[seqKey][char]) {
+      positionScore = 1.0;
+    } else {
+      const positions = ctx.userPositions || {};
+      if (seqKey && positions[seqKey] && positions[seqKey][char]) {
+        const ranks = positions[seqKey][char];
+        if (ranks.length > 0) {
+          const avgRank = ranks.reduce((a, b) => a + b, 0) / ranks.length;
+          positionScore = 1.0 / (1.0 + avgRank);
+        }
       }
     }
 
@@ -234,6 +243,29 @@
     return Array.from(seen.values());
   }
 
+  function wildcardRegex(prefix) {
+    const key = prefix.join(",");
+    let re = _wildcardReCache.get(key);
+    if (!re) {
+      const pattern =
+        "^" + prefix.map((s) => (s === 6 ? "[1-5]" : String(s))).join("");
+      re = new RegExp(pattern);
+      if (_wildcardReCache.size >= WILDCARD_RE_CACHE_MAX) {
+        _wildcardReCache.clear();
+      }
+      _wildcardReCache.set(key, re);
+    }
+    return re;
+  }
+
+  function rankAndCap(results, scoreCtx, cap) {
+    const limit = cap === undefined ? SEARCH_RESULT_CAP : cap;
+    const scored = results.map((r) => ({ r: r, s: computeScore(r, scoreCtx) }));
+    scored.sort((a, b) => b.s - a.s);
+    if (scored.length > limit) scored.length = limit;
+    return scored.map((x) => x.r);
+  }
+
   function searchPrefix(prefix, allRecords, ctx) {
     if (!prefix || !prefix.length) return [];
     allRecords = allRecords || [];
@@ -256,8 +288,7 @@
         results.push(allRecords[i]);
       }
     } else {
-      const pattern = "^" + prefix.map((s) => (s === 6 ? "[1-5]" : String(s))).join("");
-      const re = new RegExp(pattern);
+      const re = wildcardRegex(prefix);
       results = [];
       for (let i = 0; i < allRecords.length; i++) {
         if (re.test(allRecords[i][0])) {
@@ -268,8 +299,11 @@
 
     const unique = dedup(results);
     const scoreCtx = Object.assign({}, ctx || {}, { strokeSeq: prefix });
-    unique.sort((a, b) => computeScore(b, scoreCtx) - computeScore(a, scoreCtx));
-    return unique;
+    const cap =
+      ctx && ctx.searchResultCap !== undefined
+        ? ctx.searchResultCap
+        : SEARCH_RESULT_CAP;
+    return rankAndCap(unique, scoreCtx, cap);
   }
 
   const EXACT_THRESHOLD = 3;
@@ -416,6 +450,51 @@
     return unique;
   }
 
+  /**
+   * Learned phrases stored under userPositions["__phrases__"] (T3.4).
+   * Value is an array of hit markers or a numeric count.
+   */
+  function learnedPhrasesFor(seed, userPositions, limit) {
+    limit = limit === undefined ? 9 : limit;
+    if (!seed || !userPositions) return [];
+    const store = userPositions["__phrases__"];
+    if (!store || typeof store !== "object") return [];
+    const out = [];
+    for (const phrase of Object.keys(store)) {
+      if (!phrase || phrase[0] !== seed || phrase.length < 2) continue;
+      const hits = store[phrase];
+      const count = Array.isArray(hits) ? hits.length : Number(hits) || 0;
+      if (count <= 0) continue;
+      out.push({
+        phrase: phrase,
+        score: Math.min(1, 0.45 + count * 0.08),
+        isLearned: true,
+      });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, limit);
+  }
+
+  /**
+   * Auto-pin when the last `threshold` recorded ranks for (seq, char) are all 0.
+   * Mutates `pins` map: { seqKey: { char: true } }.
+   */
+  function maybeAutoPin(seqKey, char, userPositions, pins, threshold) {
+    threshold = threshold === undefined ? 3 : threshold;
+    if (!seqKey || !char || !userPositions || !pins) return false;
+    const ranks =
+      userPositions[seqKey] && userPositions[seqKey][char]
+        ? userPositions[seqKey][char]
+        : null;
+    if (!ranks || ranks.length < threshold) return false;
+    const recent = ranks.slice(-threshold);
+    if (!recent.every((r) => r === 0)) return false;
+    if (!pins[seqKey]) pins[seqKey] = {};
+    if (pins[seqKey][char]) return true;
+    pins[seqKey][char] = true;
+    return true;
+  }
+
   return {
     DEFAULT_WEIGHTS: BUILTIN_WEIGHTS,
     get USER_FREQ_CAP() {
@@ -434,6 +513,7 @@
     BEAM_DEPTH,
     BEAM_MIN_PROB,
     BEAM_MAX_RESULTS,
+    SEARCH_RESULT_CAP,
     setConfig,
     getConfig,
     computeScore,
@@ -444,6 +524,8 @@
     searchWithFuzzy,
     searchMerged,
     associationChars,
+    learnedPhrasesFor,
+    maybeAutoPin,
     predictPhrase,
     EXACT_THRESHOLD,
     recordIsExact,

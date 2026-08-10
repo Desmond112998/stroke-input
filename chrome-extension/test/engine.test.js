@@ -195,3 +195,70 @@ describe("StrokeInputEngine.match quality", () => {
     assert.ok(Engine.computeScore(exact, {}) > Engine.computeScore(fuzzy, {}));
   });
 });
+
+describe("StrokeInputEngine.searchPrefix cap", () => {
+  it("limits results to SEARCH_RESULT_CAP", () => {
+    const records = [];
+    for (let i = 0; i < 250; i++) {
+      records.push(["1" + String(i).padStart(3, "0"), "字", 0.5 - i * 0.001]);
+    }
+    // Use distinct chars so dedup keeps all
+    for (let i = 0; i < 250; i++) {
+      records[i][1] = String.fromCodePoint(0x4e00 + i);
+    }
+    records.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const out = Engine.searchPrefix([1], records, {});
+    assert.ok(out.length <= Engine.SEARCH_RESULT_CAP);
+    assert.equal(out.length, Engine.SEARCH_RESULT_CAP);
+  });
+});
+
+describe("StrokeInputEngine.learnedPhrasesFor", () => {
+  it("returns phrases starting with seed ordered by hit count", () => {
+    const positions = {
+      __phrases__: {
+        香港: [1, 1, 1],
+        香蕉: [1],
+        澳門: [1, 1],
+      },
+    };
+    const out = Engine.learnedPhrasesFor("香", positions, 5);
+    assert.deepEqual(
+      out.map((p) => p.phrase),
+      ["香港", "香蕉"]
+    );
+  });
+});
+
+describe("StrokeInputEngine.maybeAutoPin", () => {
+  it("pins after threshold consecutive rank-0 selections", () => {
+    const positions = { jk: { 你: [0, 0, 0] } };
+    const pins = {};
+    assert.equal(Engine.maybeAutoPin("jk", "你", positions, pins, 3), true);
+    assert.equal(pins.jk["你"], true);
+  });
+
+  it("does not pin when ranks are mixed", () => {
+    const positions = { jk: { 你: [0, 1, 0] } };
+    const pins = {};
+    assert.equal(Engine.maybeAutoPin("jk", "你", positions, pins, 3), false);
+    assert.deepEqual(pins, {});
+  });
+});
+
+describe("StrokeInputEngine.pins affect position score", () => {
+  it("pinned char gets full position weight", () => {
+    const score = Engine.computeScore(["jk", "你", 0], {
+      strokeSeq: ["j", "k"], // join → "jk" wait strokes are numbers
+    });
+    // strokeSeq.join for numbers [1,2] → "12"
+    const pinned = Engine.computeScore(["12", "你", 0], {
+      strokeSeq: [1, 2],
+      userPins: { "12": { 你: true } },
+    });
+    assert.ok(
+      Math.abs(pinned - Engine.DEFAULT_WEIGHTS.position * 1.0) < 1e-9
+    );
+    assert.ok(pinned >= score);
+  });
+});

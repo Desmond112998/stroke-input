@@ -21,7 +21,7 @@
 - 按頻率排序，常用字排在前面
 - 候選字分頁瀏覽（空白鍵/Page Down 翻頁）
 - 支援所有網頁的文字輸入框、textarea 及 contenteditable 元素
-- 輕量設計，不需要額外權限，不收集任何資料
+- 輕量設計，只要求 `storage` 權限；使用習慣（字頻／釘選）僅存於本機 `chrome.storage.local`，不上傳伺服器
 
 ### 使用方法
 
@@ -59,7 +59,7 @@ Features:
 - Phrase suggestions after character selection
 - Frequency-ranked candidates
 - Works with input fields, textareas, and contenteditable elements
-- Lightweight, no special permissions, no data collection
+- Lightweight, only the `storage` permission; usage habits stay in local `chrome.storage.local` and are never uploaded
 
 Press backtick (`) to toggle, type strokes, pick candidates with number keys.
 

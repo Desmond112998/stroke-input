@@ -146,10 +146,13 @@ chrome-extension/           # Chrome extension (Manifest V3)
 ├── background.js           # Service worker for global state sync
 ├── engine.js               # Pure search/ranking/phrase helpers (Node-testable)
 ├── content.js              # Input handling, UI, chrome.* wiring
+├── options.html / options.js
 ├── style.css               # Overlay styling
+├── STORE_LISTING.md        # Chrome Web Store copy
 ├── test/                   # Node built-in test runner (node --test)
 └── data/                   # Exported JSON data files
     ├── strokes.json        # Sorted [sequence, char, freq, scriptTag?]
+    ├── strokes_wubi.json   # 五筆劃 short codes (頭四尾一), optional mode
     ├── phrases.json        # Phrase dict indexed by first char
     ├── bigrams.json        # Bigram model {char1: {char2: score}}
     ├── trigrams.json       # Trigram model {p2: {p1: {char: score}}}
@@ -157,21 +160,25 @@ chrome-extension/           # Chrome extension (Manifest V3)
     └── cantonese_freq.json # Cantonese frequency overrides
 
 src/stroke_input/           # Python engine library
-├── config/                 # Configuration and constants
-├── data/                   # Data models, phrase loader, serializer, n-gram
-├── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
-├── gui/                    # Desktop GUI components (PySide6)
-└── output/                 # Character output (keyboard simulation / clipboard)
+├── config/                 # Shared ranking / Zipf / n-gram constants
+├── data/                   # Models, phrase loader, serializer, n-grams, user freq
+└── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
 
 scripts/                    # Data generation and build tools
 ├── download_stroke_data.py # Download and parse Conway stroke data
 ├── generate_phrase_dict.py # Generate phrase dictionary from CC-CEDICT
 ├── generate_cantonese_data.py # Generate Cantonese freq, phrases, bigrams
-├── export_for_chrome.py    # Export stroke DB as sorted JSON for extension
+├── export_for_chrome.py    # Export stroke DB + n-grams + ranking_config for extension
 ├── package_extension.py    # Package extension zip for Web Store
-└── generate_icons.py       # Generate extension icons
+├── generate_parity_fixture.py # Python↔JS ranking parity fixture
+├── generate_icons.py       # Generate extension icons
+├── generate_screenshots.py # Promotional Web Store screenshots (Pillow)
+└── check_keys.py           # Dev helper: print keyboard library key names
 ```
 
+### Known limitations
+
+- Cross-origin iframes, closed Shadow DOM, and canvas-based editors (e.g. Google Docs) are not supported; the overlay only targets normal editable fields in the page.
 ## License
 
 - Stroke data: [Conway Stroke Data](https://github.com/stroke-input/stroke-input-data) (CC-BY-4.0)

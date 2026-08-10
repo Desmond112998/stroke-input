@@ -14,18 +14,21 @@ The main product surface is `chrome-extension\`. It runs as a Manifest V3 extens
 
 - `manifest.json`: extension metadata and permissions
 - `background.js`: service worker and cross-tab state synchronization
-- `content.js`: input handling, candidate search, ranking, phrase suggestion, and overlay behavior
+- `engine.js`: pure search / ranking / phrase helpers (also loaded under Node tests)
+- `content.js`: input handling, candidate UI, chrome.* wiring, overlay behavior
+- `options.html` / `options.js`: user settings (`imeSettings` in `chrome.storage.local`)
 - `style.css`: overlay presentation
-- `data\*.json`: exported lookup/ranking data consumed at runtime
+- `data\*.json`: exported lookup/ranking data consumed at runtime (`strokes.json`, `strokes_wubi.json`, `phrases.json`, `bigrams.json`, `trigrams.json`, `ranking_config.json`, …)
 
 ### Python engine and tooling
 
 The Python package in `src\stroke_input\` is the source of truth for engine behavior and data processing:
 
+- `config\ranking.py`: shared ranking / Zipf / n-gram constants (exported to `ranking_config.json`)
 - `data\models.py`: core character and stroke data structures
 - `data\serializer.py`: msgpack persistence
 - `data\phrase_loader.py`: phrase dictionary loading
-- `data\user_freq_store.py`: user adaptation storage
+- `data\user_freq_store.py`: user adaptation storage (counts, recency, positions, pins)
 - `data\ngram_model.py`: character n-gram language model
 - Conway stroke parsing lives in `scripts\download_stroke_data.py` (not a package module)
 - `engine\stroke_engine.py`: trie-based prefix search and wildcard lookup
@@ -36,23 +39,24 @@ The Python package in `src\stroke_input\` is the source of truth for engine beha
 
 The repository has both source and generated data. Treat generated files carefully.
 
-1. `scripts\download_stroke_data.py` obtains/parses Conway stroke data.
+1. `scripts\download_stroke_data.py` obtains/parses Conway stroke data into `data\stroke_db.msgpack`.
 2. `scripts\generate_phrase_dict.py` builds Traditional Chinese phrase data from CC-CEDICT-derived sources.
-3. `scripts\generate_cantonese_data.py` creates Cantonese frequency, phrase, and bigram data.
-4. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\`.
-5. `scripts\package_extension.py` rebuilds/validates/package the extension.
+3. `scripts\generate_cantonese_data.py` creates Cantonese frequency, phrase, and bigram seed data.
+4. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\` (full strokes, optional 五筆劃 index, unified n-grams, ranking config). Per-character stroke variants are capped on export.
+5. `scripts\package_extension.py` rebuilds/validates/packages the extension zip.
+6. `scripts\generate_parity_fixture.py` refreshes the Python↔JS ranking parity fixture used by tests.
+7. Optional assets: `scripts\generate_icons.py`, `scripts\generate_screenshots.py` (Web Store images). `scripts\check_keys.py` is a local keyboard-name debug helper (requires the `keyboard` package; not part of the extension runtime).
 
 ## Ranking and inference intent
 
 Candidate ordering blends several concerns:
 
-- exact/prefix stroke match quality
-- static frequency
-- Traditional Chinese preference
-- Cantonese frequency boosts
-- user frequency adaptation
-- previous-character context and bigram scores
-- phrase suggestions after character selection
+- exact/prefix stroke match quality (fuzzy one-stroke substitution ranks after exact)
+- static frequency (Zipf-mapped ranks + Cantonese overrides)
+- Traditional Chinese preference (Conway `^` / `"t"` script tag)
+- user frequency adaptation, recency, and position / pin history
+- previous-character bigram and trigram context
+- mid-typing association characters and phrase suggestions after selection (including auto-learned phrases)
 
 Changes to ranking should be deliberate and covered by tests because small score changes can alter visible UX.
 

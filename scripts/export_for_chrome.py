@@ -32,6 +32,10 @@ from stroke_input.data.serializer import load_msgpack  # noqa: E402
 
 OUT_DIR = _ROOT / "chrome-extension" / "data"
 
+# Cap stroke-sequence variants per character (Conway regex expansions).
+# Keep highest-frequency encodings; rare glyphs can otherwise explode to ~90 rows.
+MAX_VARIANTS_PER_CHAR = 12
+
 
 def _script_tag(flag: str) -> str | None:
     if flag == "trad":
@@ -81,6 +85,23 @@ def export_strokes() -> None:
                 if tag:
                     wrow.append(tag)
                 wubi_data.append(wrow)
+
+    # Cap per-character variants (keep highest frequency)
+    from collections import defaultdict
+
+    by_char: dict[str, list] = defaultdict(list)
+    for row in data:
+        by_char[row[1]].append(row)
+    capped: list = []
+    for rows in by_char.values():
+        rows.sort(key=lambda x: -x[2])
+        capped.extend(rows[:MAX_VARIANTS_PER_CHAR])
+    if len(capped) < len(data):
+        print(
+            f"  Variant cap {MAX_VARIANTS_PER_CHAR}/char: "
+            f"{len(data)} → {len(capped)} stroke rows"
+        )
+    data = capped
 
     data.sort(key=lambda x: x[0])
     out = OUT_DIR / "strokes.json"
