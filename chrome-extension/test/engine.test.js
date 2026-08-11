@@ -64,9 +64,8 @@ describe("StrokeInputEngine.computeScore", () => {
         userPositions: { "1": { 一: [0, 0] } },
       });
       const w = Engine.DEFAULT_WEIGHTS;
-      const prox = Engine.WEIGHT_STROKE_PROXIMITY * 1.0; // exact-complete
       assert.ok(
-        Math.abs(score - (w.recency * 1.0 + w.position * 1.0 + prox)) < 1e-9
+        Math.abs(score - (w.recency * 1.0 + w.position * 1.0)) < 1e-9
       );
     });
   });
@@ -199,10 +198,10 @@ describe("StrokeInputEngine.match quality", () => {
   });
 });
 
-describe("StrokeInputEngine.stroke proximity ranking", () => {
-  it("ranks exact-complete short chars above long high-freq chars", () => {
+describe("StrokeInputEngine.frequency-first prefix ranking", () => {
+  it("keeps a common short exact character first without length scoring", () => {
     const records = [
-      ["1", "一", 0.03],
+      ["1", "一", 0.995],
       ["1325", "冇", 0.97],
       ["111125134154544", "諗", 0.88, "t"],
       ["1251112", "車", 0.88, "t"],
@@ -214,6 +213,18 @@ describe("StrokeInputEngine.stroke proximity ranking", () => {
 
   it("applies only a small traditional boost (tie-breaker)", () => {
     assert.ok(Engine.TRADITIONAL_BOOST <= 0.015);
+  });
+
+  it("ranks a ranked character above unranked shorter glyphs", () => {
+    const records = [
+      ["5415412512", "翀", 0],
+      ["541541251153", "䎈", 0],
+      ["5415412512134", "䎌", 0],
+      ["541541251112134", "翨", 0],
+      ["54154125121122134", "翼", 0.01],
+    ];
+    const out = Engine.searchPrefix([5, 4, 1, 5, 4, 1, 2, 5, 1], records, {});
+    assert.equal(out[0][1], "翼");
   });
 });
 
@@ -303,9 +314,8 @@ describe("StrokeInputEngine.pins affect position score", () => {
       strokeSeq: [1, 2],
       userPins: { "12": { 你: true } },
     });
-    const prox = Engine.WEIGHT_STROKE_PROXIMITY * 1.0;
     assert.ok(
-      Math.abs(pinned - (Engine.DEFAULT_WEIGHTS.position * 1.0 + prox)) < 1e-9
+      Math.abs(pinned - Engine.DEFAULT_WEIGHTS.position * 1.0) < 1e-9
     );
     assert.ok(pinned > unpinned);
   });
