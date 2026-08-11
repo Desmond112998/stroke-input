@@ -36,6 +36,8 @@ REQUIRED_FILES = [
     "manifest.json",
     "engine.js",
     "content.js",
+    "options.html",
+    "options.js",
     "style.css",
     "data/strokes.json",
     "data/phrases.json",
