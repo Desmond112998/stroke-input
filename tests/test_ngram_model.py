@@ -12,7 +12,8 @@ from stroke_input.data.ngram_model import NgramModel
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_phrases(*texts: str, freq: float = 1.0) -> list[PhraseEntry]:
+def _make_phrases(*texts: str, freq: float = 0.0) -> list[PhraseEntry]:
+    """Build phrases. Default freq=0 → count weight 1 (see NGRAM_FREQ_WEIGHT_K)."""
     return [PhraseEntry(phrase=t, frequency=freq) for t in texts]
 
 
@@ -63,6 +64,13 @@ class TestBuild:
         phrases = _make_phrases("你好", "你好", "你好")
         m = NgramModel.build_from_phrases(phrases)
         assert m.bigram_count("你", "好") == 3
+
+    def test_phrase_frequency_weights_counts(self) -> None:
+        low = NgramModel.build_from_phrases(_make_phrases("你好", freq=0.0))
+        high = NgramModel.build_from_phrases(_make_phrases("你好", freq=1.0))
+        assert high.bigram_count("你", "好") > low.bigram_count("你", "好")
+        assert low.bigram_count("你", "好") == 1
+        assert high.bigram_count("你", "好") == 11  # 1 + round(1.0 * 10)
 
 
 # ---------------------------------------------------------------------------

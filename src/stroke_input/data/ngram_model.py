@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from stroke_input.config.ranking import NGRAM_FREQ_WEIGHT_K
 from stroke_input.data.models import PhraseEntry
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,18 @@ _LAMBDA_BI = (0.30, 0.70)           # (unigram, bigram)
 
 # Default add-k smoothing constant
 _DEFAULT_K = 0.1
+
+
+def _phrase_count_weight(frequency: float, k: float = NGRAM_FREQ_WEIGHT_K) -> int:
+    """Map a PhraseEntry.frequency in [0, 1] to a positive integer count.
+
+    Formula (documented for ranking honesty):
+        weight = max(1, 1 + round(frequency * k))
+
+    With default k=10, a freq=0.8 phrase contributes 9 counts; freq=0
+    still contributes 1 so rare phrases are not dropped entirely.
+    """
+    return max(1, 1 + int(round(float(frequency) * k)))
 
 
 class NgramModel:
@@ -80,6 +93,10 @@ class NgramModel:
     ) -> NgramModel:
         """Build an NgramModel by counting n-grams across all phrase texts.
 
+        Each phrase contributes ``max(1, 1 + round(frequency * k))`` to the
+        raw counts (see :func:`_phrase_count_weight`), so higher-frequency
+        phrases influence the LM more than length-heuristic fillers.
+
         Single-character phrases contribute only unigram counts.
         Two-character phrases add bigrams.
         Three-or-more character phrases add bigrams and trigrams for each
@@ -87,8 +104,6 @@ class NgramModel:
 
         Args:
             phrases: List of PhraseEntry objects (phrase text + frequency).
-                     Frequency is currently unused during counting; each
-                     occurrence of a phrase contributes count 1.
             k: Add-k smoothing constant (default 0.1).
 
         Returns:
@@ -99,17 +114,18 @@ class NgramModel:
             text = entry.phrase
             if not text:
                 continue
+            w = _phrase_count_weight(entry.frequency)
             # Unigrams
             for ch in text:
-                model._uni[ch] = model._uni.get(ch, 0) + 1
-                model._uni_total += 1
+                model._uni[ch] = model._uni.get(ch, 0) + w
+                model._uni_total += w
                 model._vocab.add(ch)
             # Bigrams
             for i in range(1, len(text)):
                 p1, c = text[i - 1], text[i]
                 if p1 not in model._bi:
                     model._bi[p1] = {}
-                model._bi[p1][c] = model._bi[p1].get(c, 0) + 1
+                model._bi[p1][c] = model._bi[p1].get(c, 0) + w
             # Trigrams
             for i in range(2, len(text)):
                 p2, p1, c = text[i - 2], text[i - 1], text[i]
@@ -117,7 +133,7 @@ class NgramModel:
                     model._tri[p2] = {}
                 if p1 not in model._tri[p2]:
                     model._tri[p2][p1] = {}
-                model._tri[p2][p1][c] = model._tri[p2][p1].get(c, 0) + 1
+                model._tri[p2][p1][c] = model._tri[p2][p1].get(c, 0) + w
 
         logger.info(
             "NgramModel built: vocab=%d, unigram_total=%d, bigram_contexts=%d, "

@@ -167,16 +167,22 @@
   async function loadData() {
     if (dataLoaded) return;
     try {
-      const [strokeResp, phraseResp, bigramResp, trigramResp] = await Promise.all([
+      const [strokeResp, phraseResp, bigramResp, trigramResp, rankingResp] = await Promise.all([
         fetch(chrome.runtime.getURL("data/strokes.json")),
         fetch(chrome.runtime.getURL("data/phrases.json")),
         fetch(chrome.runtime.getURL("data/bigrams.json")),
         fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
+        fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
       ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
       bigrams = await bigramResp.json();
       trigrams = trigramResp ? await trigramResp.json() : {};
+      if (rankingResp && Engine) {
+        try {
+          Engine.setConfig(await rankingResp.json());
+        } catch (e) {}
+      }
       dataLoaded = true;
       loadUserFreq();
       console.log(
@@ -294,10 +300,10 @@
   }
 
   function isTrigramDriven(record) {
-    // A candidate is "trigram-driven" if trigram score > 0 for current context
-    if (!prevSelectedChar || !lastSelectedChar) return false;
-    const t = trigrams[prevSelectedChar];
-    return !!(t && t[lastSelectedChar] && t[lastSelectedChar][record[1]]);
+    // Badge only when trigram contributes meaningfully to the composite score
+    if (!Engine) return false;
+    const contrib = Engine.trigramContribution(record, rankingContext());
+    return contrib >= (Engine.TRIGRAM_BADGE_MIN || 0.02);
   }
 
   function render() {
