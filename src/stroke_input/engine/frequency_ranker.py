@@ -13,8 +13,8 @@ Composite score formula (v2):
           + w_recency  * recency_score     (requires UserFreqStore + RankingContext)
           + w_position * position_score   (requires UserFreqStore + RankingContext)
 
-The three new weights (trigram, recency, position) default to 0.0, so all
-existing callers continue to work unchanged.
+The three new weights (trigram, recency, position) default to the shared
+ranking config values (see ``stroke_input.config.ranking``).
 
 Pass a :class:`RankingContext` to :meth:`FrequencyRanker.composite_score` or
 :meth:`FrequencyRanker.rank` to activate the new signals.
@@ -38,47 +38,40 @@ from stroke_input.engine.inference_engine import ScoredCandidate
 
 logger = logging.getLogger(__name__)
 
-# Default weights for composite scoring
-DEFAULT_WEIGHT_STATIC_FREQ = 0.4
-DEFAULT_WEIGHT_USER_FREQ = 0.3
-DEFAULT_WEIGHT_CONTEXT_BOOST = 0.2
-DEFAULT_WEIGHT_MATCH_QUALITY = 0.1
+# Default weights for composite scoring (from shared ranking config)
+from stroke_input.config.ranking import (
+    MATCH_QUALITY_EXACT as _MQ_EXACT,
+    MATCH_QUALITY_FUZZY as _MQ_FUZZY,
+    TRADITIONAL_BOOST as _TRADITIONAL_BOOST_CFG,
+    USER_FREQ_CAP as _USER_FREQ_CAP_CFG,
+    WEIGHT_BIGRAM,
+    WEIGHT_MATCH_QUALITY,
+    WEIGHT_POSITION,
+    WEIGHT_RECENCY,
+    WEIGHT_STATIC_FREQ,
+    WEIGHT_TRIGRAM,
+    WEIGHT_USER_FREQ,
+)
+
+DEFAULT_WEIGHT_STATIC_FREQ = WEIGHT_STATIC_FREQ
+DEFAULT_WEIGHT_USER_FREQ = WEIGHT_USER_FREQ
+DEFAULT_WEIGHT_CONTEXT_BOOST = WEIGHT_BIGRAM  # phrase context peer of JS bigram
+DEFAULT_WEIGHT_MATCH_QUALITY = WEIGHT_MATCH_QUALITY
 
 # Match quality scores
-MATCH_QUALITY_EXACT = 1.0
-MATCH_QUALITY_FUZZY = 0.5
+MATCH_QUALITY_EXACT = _MQ_EXACT
+MATCH_QUALITY_FUZZY = _MQ_FUZZY
 
-# Boost applied to Traditional Chinese characters
-_TRADITIONAL_BOOST = 0.05
+# Boost applied to Traditional-only characters (Conway ^ marker)
+_TRADITIONAL_BOOST = _TRADITIONAL_BOOST_CFG
 
 # Maximum user frequency used for normalization
-_USER_FREQ_NORM_CAP = 100.0
+_USER_FREQ_NORM_CAP = _USER_FREQ_CAP_CFG
 
 
-def _is_likely_traditional(character: str) -> bool:
-    """Heuristic check if a character is likely Traditional Chinese.
-
-    Uses CJK Unified Ideographs range and checks for characters that are
-    commonly used in Traditional Chinese (Taiwan/Hong Kong) but not in
-    Simplified Chinese.  This is a lightweight heuristic — not exhaustive.
-
-    A character is considered "likely traditional" if it falls in the CJK
-    Unified Ideographs Extension ranges (U+3400–U+4DBF, U+20000–U+2A6DF)
-    or has a code point above U+9000 in the main CJK block, which tends to
-    contain more Traditional-only forms.
-    """
-    cp = ord(character[0]) if character else 0
-    # CJK Unified Ideographs: U+4E00–U+9FFF
-    # Characters above U+9000 are more likely Traditional-only
-    if 0x9000 <= cp <= 0x9FFF:
-        return True
-    # CJK Extension A (rare/traditional forms)
-    if 0x3400 <= cp <= 0x4DBF:
-        return True
-    # CJK Extension B (rare/traditional forms)
-    if 0x20000 <= cp <= 0x2A6DF:
-        return True
-    return False
+def _is_traditional_preferred(record) -> bool:
+    """Return True when Conway marked the character as traditional-only."""
+    return getattr(record, "script_flag", "") == "trad"
 
 
 @dataclass
@@ -105,8 +98,8 @@ class RankingContext:
 class RankerWeights:
     """Configurable weights for the composite scoring formula.
 
-    The three new fields (trigram, recency, position) default to 0.0 for
-    full backwards compatibility with existing call sites.
+    The three new fields (trigram, recency, position) default to the shared
+    ranking-config weights.
 
     Attributes:
         static_freq: Weight for the static character frequency.
@@ -122,9 +115,9 @@ class RankerWeights:
     user_freq: float = DEFAULT_WEIGHT_USER_FREQ
     context_boost: float = DEFAULT_WEIGHT_CONTEXT_BOOST
     match_quality: float = DEFAULT_WEIGHT_MATCH_QUALITY
-    trigram: float = 0.0
-    recency: float = 0.0
-    position: float = 0.0
+    trigram: float = WEIGHT_TRIGRAM
+    recency: float = WEIGHT_RECENCY
+    position: float = WEIGHT_POSITION
 
 
 class FrequencyRanker:
@@ -238,8 +231,8 @@ class FrequencyRanker:
                 )
                 score += w.position * pos
 
-        # Traditional Chinese boost
-        if _is_likely_traditional(rec.character):
+        # Traditional Chinese boost (Conway ^ marker only)
+        if _is_traditional_preferred(rec):
             score += _TRADITIONAL_BOOST
 
         return score
@@ -268,7 +261,7 @@ class FrequencyRanker:
 
         def sort_key(c: ScoredCandidate) -> tuple[float, int, int]:
             score = self.composite_score(c, context=context)
-            trad = 0 if _is_likely_traditional(c.record.character) else 1
+            trad = 0 if _is_traditional_preferred(c.record) else 1
             return (-score, c.record.stroke_count, trad)
 
         return sorted(candidates, key=sort_key)

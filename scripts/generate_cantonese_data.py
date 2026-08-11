@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Generate Cantonese-specific frequency data, phrase dictionary, and bigram model.
+"""Generate Cantonese-specific frequency data and phrase dictionary.
 
-This script produces three data files for the Chrome extension:
+This script produces data files for the Chrome extension:
 1. Cantonese character frequency adjustments (merged into strokes.json via export)
 2. Cantonese phrase dictionary (supplements CC-CEDICT with Cantonese collocations)
-3. Bigram frequency model P(char2 | char1) for contextual prediction
 
-Sources:
-- Cantonese-specific character frequencies based on HK usage patterns
-- Common Cantonese collocations and expressions
-- Bigram co-occurrence data derived from phrase patterns
+Bigram/trigram JSON is built by ``export_for_chrome.py`` from a unified
+:class:`~stroke_input.data.ngram_model.NgramModel` (same score scale).
+Hand-tuned Cantonese pairs live in ``CANTONESE_BIGRAM_PAIRS`` and are
+injected into that corpus at export time.
 """
 
 import json
@@ -416,27 +415,7 @@ def generate_cantonese_phrases() -> dict[str, list[list]]:
     return existing
 
 
-def generate_bigram_model(phrases: dict[str, list[list]]) -> dict[str, dict[str, float]]:
-    """Generate bigram frequency model P(char2 | char1) from phrase data.
-
-    For each pair of adjacent characters in phrases, compute a co-occurrence
-    score. The result is a sparse dict: {char1: {char2: score, ...}, ...}
-
-    Only keeps the top N bigrams per character to keep the data compact.
-    """
-    MAX_BIGRAMS_PER_CHAR = 15
-    co_occurrence: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-
-    # Extract bigrams from all phrases
-    for first_char, entries in phrases.items():
-        for phrase, freq in entries:
-            for i in range(len(phrase) - 1):
-                c1 = phrase[i]
-                c2 = phrase[i + 1]
-                co_occurrence[c1][c2] += freq
-
-    # Also add strong bigrams from Cantonese-specific patterns
-    cantonese_bigrams: list[tuple[str, str, float]] = [
+CANTONESE_BIGRAM_PAIRS: list[tuple[str, str, float]] = [
         # Pronoun + plural
         ("我", "哋", 2.0), ("你", "哋", 2.0), ("佢", "哋", 2.0),
         ("人", "哋", 1.5),
@@ -485,9 +464,27 @@ def generate_bigram_model(phrases: dict[str, list[list]]) -> dict[str, dict[str,
         # Common collocations
         ("屋", "企", 2.0), ("自", "己", 2.0), ("大", "家", 1.8),
         ("香", "港", 2.0), ("茶", "餐", 1.5),
-    ]
+]
 
-    for c1, c2, score in cantonese_bigrams:
+
+def generate_bigram_model(phrases: dict[str, list[list]]) -> dict[str, dict[str, float]]:
+    """Deprecated legacy exporter (max-normalized co-occurrence).
+
+    Prefer ``export_for_chrome.py`` which builds smoothed bigrams/trigrams
+    from :class:`NgramModel` on a unified corpus. Kept for one-off debugging.
+    """
+    MAX_BIGRAMS_PER_CHAR = 15
+    co_occurrence: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
+    # Extract bigrams from all phrases
+    for first_char, entries in phrases.items():
+        for phrase, freq in entries:
+            for i in range(len(phrase) - 1):
+                c1 = phrase[i]
+                c2 = phrase[i + 1]
+                co_occurrence[c1][c2] += freq
+
+    for c1, c2, score in CANTONESE_BIGRAM_PAIRS:
         co_occurrence[c1][c2] = max(co_occurrence[c1][c2], score)
 
     # Normalize and keep top N per character
@@ -528,15 +525,9 @@ def main() -> None:
     total_phrases = sum(len(v) for v in phrases.values())
     print(f"  {total_phrases} phrases ({len(phrases)} buckets) -> {phrases_path}")
 
-    print("\nStep 3: Generating bigram model...")
-    bigrams = generate_bigram_model(phrases)
-    bigram_path = OUTPUT_DIR / "bigrams.json"
-    bigram_path.write_text(
-        json.dumps(bigrams, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    total_bigrams = sum(len(v) for v in bigrams.values())
-    print(f"  {total_bigrams} bigrams ({len(bigrams)} first chars) -> {bigram_path}")
+    print("\nStep 3: Skipping legacy max-normalized bigrams")
+    print("  (bigrams.json / trigrams.json are built by export_for_chrome.py")
+    print("   from NgramModel on the unified phrase corpus)")
 
     print("\nDone!")
 

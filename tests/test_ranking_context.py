@@ -78,9 +78,14 @@ class TestRankerWeightsNewFields:
         assert hasattr(w, "trigram")
         assert hasattr(w, "recency")
         assert hasattr(w, "position")
-        assert w.trigram == 0.0
-        assert w.recency == 0.0
-        assert w.position == 0.0
+        from stroke_input.config.ranking import (
+            WEIGHT_POSITION,
+            WEIGHT_RECENCY,
+            WEIGHT_TRIGRAM,
+        )
+        assert w.trigram == WEIGHT_TRIGRAM
+        assert w.recency == WEIGHT_RECENCY
+        assert w.position == WEIGHT_POSITION
 
     def test_existing_defaults_unchanged(self) -> None:
         from stroke_input.engine.frequency_ranker import (

@@ -23,10 +23,11 @@ The main product surface is `chrome-extension\`. It runs as a Manifest V3 extens
 The Python package in `src\stroke_input\` is the source of truth for engine behavior and data processing:
 
 - `data\models.py`: core character and stroke data structures
-- `data\parser.py`: source stroke-data parsing
 - `data\serializer.py`: msgpack persistence
 - `data\phrase_loader.py`: phrase dictionary loading
 - `data\user_freq_store.py`: user adaptation storage
+- `data\ngram_model.py`: character n-gram language model
+- Conway stroke parsing lives in `scripts\download_stroke_data.py` (not a package module)
 - `engine\stroke_engine.py`: trie-based prefix search and wildcard lookup
 - `engine\inference_engine.py`: fuzzy inference and contextual phrase support
 - `engine\frequency_ranker.py`: composite candidate scoring

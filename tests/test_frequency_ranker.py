@@ -10,7 +10,7 @@ from stroke_input.engine.frequency_ranker import (
     RankerWeights,
     MATCH_QUALITY_EXACT,
     MATCH_QUALITY_FUZZY,
-    _is_likely_traditional,
+    _is_traditional_preferred,
 )
 from stroke_input.engine.inference_engine import ScoredCandidate
 
@@ -25,12 +25,14 @@ def _candidate(
     freq: float = 0.5,
     is_exact: bool = True,
     context_boost: float = 0.0,
+    script_flag: str = "",
 ) -> ScoredCandidate:
     """Build a ScoredCandidate for testing."""
     rec = CharacterRecord(
         character=char,
         stroke_sequence=strokes,
         frequency=freq,
+        script_flag=script_flag,
     )
     return ScoredCandidate(record=rec, is_exact=is_exact, context_boost=context_boost)
 
@@ -139,36 +141,38 @@ class TestRanking:
         assert ranked[0].record.character == "人"
 
     def test_traditional_preferred_over_simplified(self):
-        """Traditional Chinese forms should rank above Simplified when scores are close."""
-        weights = RankerWeights(static_freq=1.0, user_freq=0.0, context_boost=0.0, match_quality=0.0)
+        """Conway trad-only marker should rank above unmarked when scores are close."""
+        weights = RankerWeights(
+            static_freq=1.0,
+            user_freq=0.0,
+            context_boost=0.0,
+            match_quality=0.0,
+            trigram=0.0,
+            recency=0.0,
+            position=0.0,
+        )
         ranker = FrequencyRanker(weights=weights)
-        # Use a character in the Traditional-heavy range (U+9000+)
-        # 龍 (U+9F8D) is Traditional, 龙 (U+9F99) is also in range but let's use
-        # a clear pair: 體 (U+9AD4, traditional) vs 体 (U+4F53, simplified)
-        trad = _candidate("體", [1] * 5, freq=0.5)  # U+9AD4 > U+9000
-        simp = _candidate("体", [1] * 5, freq=0.5)  # U+4F53 < U+9000
+        trad = _candidate("體", [1] * 5, freq=0.5, script_flag="trad")
+        simp = _candidate("体", [1] * 5, freq=0.5, script_flag="simp")
         ranked = ranker.rank([simp, trad])
         assert ranked[0].record.character == "體"
 
 
 # ---------------------------------------------------------------------------
-# Traditional Chinese detection
+# Traditional Chinese detection (Conway markers)
 # ---------------------------------------------------------------------------
 
 class TestTraditionalDetection:
-    """Tests for _is_likely_traditional heuristic."""
+    """Tests for _is_traditional_preferred using Conway script_flag."""
 
-    def test_high_codepoint_is_traditional(self):
-        # 體 = U+9AD4 (> U+9000)
-        assert _is_likely_traditional("體") is True
+    def test_trad_flag(self):
+        rec = CharacterRecord(character="體", stroke_sequence=[1], script_flag="trad")
+        assert _is_traditional_preferred(rec) is True
 
-    def test_low_codepoint_is_not_traditional(self):
-        # 大 = U+5927 (< U+9000)
-        assert _is_likely_traditional("大") is False
+    def test_simp_flag(self):
+        rec = CharacterRecord(character="体", stroke_sequence=[1], script_flag="simp")
+        assert _is_traditional_preferred(rec) is False
 
-    def test_extension_a_is_traditional(self):
-        # U+3400 is start of CJK Extension A
-        assert _is_likely_traditional("\u3400") is True
-
-    def test_empty_string(self):
-        assert _is_likely_traditional("") is False
+    def test_shared_flag(self):
+        rec = CharacterRecord(character="大", stroke_sequence=[1], script_flag="")
+        assert _is_traditional_preferred(rec) is False

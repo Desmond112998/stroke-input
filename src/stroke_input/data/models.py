@@ -64,16 +64,21 @@ class CharacterRecord:
         stroke_sequence: Ordered list of stroke codes (1-5) representing the writing order.
         stroke_count: Total number of strokes (len of stroke_sequence).
         frequency: Usage frequency score (higher = more common).
+        script_flag: Conway script marker — ``""`` (shared), ``"trad"`` (^),
+            or ``"simp"`` (*).
     """
 
     character: str
     stroke_sequence: list[int] = field(default_factory=list)
     stroke_count: int = 0
     frequency: float = 0.0
+    script_flag: str = ""
 
     def __post_init__(self) -> None:
         if self.stroke_count == 0 and self.stroke_sequence:
             self.stroke_count = len(self.stroke_sequence)
+        if self.script_flag not in ("", "trad", "simp"):
+            raise ValueError(f"invalid script_flag: {self.script_flag!r}")
 
 
 @dataclass

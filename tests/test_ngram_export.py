@@ -17,8 +17,8 @@ from stroke_input.data.ngram_export import export_trigrams_for_chrome, export_bi
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _model(*phrases: str) -> NgramModel:
-    entries = [PhraseEntry(phrase=p, frequency=1.0) for p in phrases]
+def _model(*phrases: str, freq: float = 0.0) -> NgramModel:
+    entries = [PhraseEntry(phrase=p, frequency=freq) for p in phrases]
     return NgramModel.build_from_phrases(entries)
 
 
@@ -50,9 +50,9 @@ class TestExportTrigramsForChrome:
                     assert 0.0 < score <= 1.0, f"score out of range: {p2}→{p1}→{c}={score}"
 
     def test_min_count_filters_rare_trigrams(self) -> None:
-        # "中文字" appears once; "香港人" appears 5 times
-        entries = [PhraseEntry(phrase="香港人", frequency=1.0)] * 5 + \
-                  [PhraseEntry(phrase="中文字", frequency=1.0)]
+        # "中文字" appears once; "香港人" appears 5 times (freq=0 → weight 1 each)
+        entries = [PhraseEntry(phrase="香港人", frequency=0.0)] * 5 + \
+                  [PhraseEntry(phrase="中文字", frequency=0.0)]
         m = NgramModel.build_from_phrases(entries)
         # min_count=3: only "香港人" trigram should survive
         result = export_trigrams_for_chrome(m, min_count=3)

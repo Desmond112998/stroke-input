@@ -1,26 +1,23 @@
 {
-  "version": 1,
-  "aligned": false,
-  "aligned_note": "JS and Python ranking weights currently diverge. Set aligned=true after T1.5 (shared ranking_config.json).",
+  "version": 2,
+  "aligned": true,
+  "aligned_note": "Weight constants come from stroke_input.config.ranking. Static-only scores should match when aligned=true.",
   "python_weights": {
-    "staticFreq": 0.4,
-    "userFreq": 0.3,
-    "contextBoost": 0.2,
+    "staticFreq": 0.35,
+    "userFreq": 0.2,
+    "contextBoost": 0.15,
     "matchQuality": 0.1,
-    "trigram": 0.0,
-    "recency": 0.0,
-    "position": 0.0,
-    "userFreqCap": 100,
+    "userFreqCap": 100.0,
     "traditionalBoost": 0.05
   },
   "js_weights": {
-    "staticFreq": 0.3,
-    "userFreq": 0.25,
+    "staticFreq": 0.35,
+    "userFreq": 0.2,
     "bigram": 0.15,
     "trigram": 0.15,
     "recency": 0.1,
     "position": 0.05,
-    "userFreqCap": 50
+    "userFreqCap": 100.0
   },
   "cases": [
     {
@@ -32,8 +29,8 @@
       ],
       "is_exact": true,
       "context_boost": 0.0,
-      "python_score": 0.4958,
-      "notes": "Python default ranker: static/user/context/match_quality only; optional trigram/recency/position weights are 0."
+      "python_score": 0.346325,
+      "notes": "Static-only Python score (user/context/trigram/recency/position off)."
     },
     {
       "id": "係-323554234-exact1",
@@ -44,8 +41,8 @@
       ],
       "is_exact": true,
       "context_boost": 0.0,
-      "python_score": 0.496,
-      "notes": "Python default ranker: static/user/context/match_quality only; optional trigram/recency/position weights are 0."
+      "python_score": 0.3465,
+      "notes": "Static-only Python score (user/context/trigram/recency/position off)."
     },
     {
       "id": "嘅-25132511111535-exact1",
@@ -56,8 +53,21 @@
       ],
       "is_exact": true,
       "context_boost": 0.0,
-      "python_score": 0.49412,
-      "notes": "Python default ranker: static/user/context/match_quality only; optional trigram/recency/position weights are 0."
+      "python_score": 0.344855,
+      "notes": "Static-only Python score (user/context/trigram/recency/position off)."
+    },
+    {
+      "id": "體-1-exact1",
+      "record": [
+        "1",
+        "體",
+        0.5,
+        "t"
+      ],
+      "is_exact": true,
+      "context_boost": 0.0,
+      "python_score": 0.225,
+      "notes": "Static-only Python score (user/context/trigram/recency/position off)."
     },
     {
       "id": "二-11-exact0",
@@ -68,20 +78,8 @@
       ],
       "is_exact": false,
       "context_boost": 0.0,
-      "python_score": 0.25,
-      "notes": "Python default ranker: static/user/context/match_quality only; optional trigram/recency/position weights are 0."
-    },
-    {
-      "id": "港-44111215-exact1",
-      "record": [
-        "44111215",
-        "港",
-        0.8
-      ],
-      "is_exact": true,
-      "context_boost": 0.9,
-      "python_score": 0.6,
-      "notes": "Python default ranker: static/user/context/match_quality only; optional trigram/recency/position weights are 0."
+      "python_score": 0.175,
+      "notes": "Static-only Python score (user/context/trigram/recency/position off)."
     }
   ]
 }
