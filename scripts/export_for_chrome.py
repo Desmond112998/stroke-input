@@ -51,7 +51,9 @@ def export_strokes() -> None:
         print(f"Loaded {len(cantonese_freq)} Cantonese frequency overrides")
 
     data = []
+    wubi_data = []
     seen: set[tuple[str, str]] = set()
+    wubi_seen: set[tuple[str, str]] = set()
     for r in records:
         seq = "".join(str(s) for s in r.stroke_sequence)
         key = (seq, r.character)
@@ -67,10 +69,28 @@ def export_strokes() -> None:
             row.append(tag)
         data.append(row)
 
+        # Wubi-hua (頭四尾一): only for characters with more than 5 strokes
+        if len(r.stroke_sequence) > 5:
+            wubi_seq = "".join(
+                str(s) for s in (r.stroke_sequence[:4] + [r.stroke_sequence[-1]])
+            )
+            wkey = (wubi_seq, r.character)
+            if wkey not in wubi_seen:
+                wubi_seen.add(wkey)
+                wrow: list = [wubi_seq, r.character, round(freq, 4)]
+                if tag:
+                    wrow.append(tag)
+                wubi_data.append(wrow)
+
     data.sort(key=lambda x: x[0])
     out = OUT_DIR / "strokes.json"
     out.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     print(f"{len(data)} stroke entries -> {out} ({out.stat().st_size:,} bytes)")
+
+    wubi_data.sort(key=lambda x: x[0])
+    wubi_out = OUT_DIR / "strokes_wubi.json"
+    wubi_out.write_text(json.dumps(wubi_data, ensure_ascii=False), encoding="utf-8")
+    print(f"{len(wubi_data)} wubi-hua entries -> {wubi_out} ({wubi_out.stat().st_size:,} bytes)")
 
 
 def _phrase_entries_from_json(path: Path) -> list[PhraseEntry]:

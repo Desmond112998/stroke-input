@@ -200,3 +200,19 @@
   border-radius: 3px;
   cursor: default;
 }
+
+.assoc-badge {
+  font-size: 9px;
+  color: rgba(120, 220, 180, 0.9);
+  margin-right: 2px;
+  vertical-align: super;
+  line-height: 1;
+}
+
+.fuzzy-badge {
+  font-size: 9px;
+  color: rgba(180, 180, 200, 0.85);
+  margin-right: 2px;
+  vertical-align: super;
+  line-height: 1;
+}

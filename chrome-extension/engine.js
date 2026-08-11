@@ -32,6 +32,11 @@
   let RECENCY_TAU_SEC = 30 * 86400;
   let TRADITIONAL_BOOST = 0.05;
   let TRIGRAM_BADGE_MIN = 0.02;
+  // Match quality is only applied when a record has an explicit isExact flag
+  // (fuzzy path). Untagged prefix results keep parity with static-only scores.
+  let WEIGHT_MATCH_QUALITY = 0.1;
+  let MATCH_QUALITY_EXACT = 1.0;
+  let MATCH_QUALITY_FUZZY = 0.5;
 
   const BEAM_WIDTH = 5;
   const BEAM_DEPTH = 3;
@@ -57,6 +62,18 @@
     if (typeof cfg.trigramBadgeMinContribution === "number") {
       TRIGRAM_BADGE_MIN = cfg.trigramBadgeMinContribution;
     }
+    if (typeof cfg.weightMatchQuality === "number") {
+      WEIGHT_MATCH_QUALITY = cfg.weightMatchQuality;
+    }
+    if (cfg.weights && typeof cfg.weights.matchQuality === "number") {
+      WEIGHT_MATCH_QUALITY = cfg.weights.matchQuality;
+    }
+    if (typeof cfg.matchQualityExact === "number") {
+      MATCH_QUALITY_EXACT = cfg.matchQualityExact;
+    }
+    if (typeof cfg.matchQualityFuzzy === "number") {
+      MATCH_QUALITY_FUZZY = cfg.matchQualityFuzzy;
+    }
   }
 
   function getConfig() {
@@ -66,7 +83,50 @@
       recencyTauSec: RECENCY_TAU_SEC,
       traditionalBoost: TRADITIONAL_BOOST,
       trigramBadgeMinContribution: TRIGRAM_BADGE_MIN,
+      weightMatchQuality: WEIGHT_MATCH_QUALITY,
+      matchQualityExact: MATCH_QUALITY_EXACT,
+      matchQualityFuzzy: MATCH_QUALITY_FUZZY,
     };
+  }
+
+  function recordIsExact(record) {
+    return !record || record.isExact !== false;
+  }
+
+  function tagRecord(record, isExact) {
+    const tagged = record.slice();
+    if (record.length > 3) {
+      for (let i = 3; i < record.length; i++) tagged[i] = record[i];
+    }
+    tagged.isExact = isExact;
+    return tagged;
+  }
+
+  function dedupPreferExact(results) {
+    const seen = new Map();
+    for (const r of results) {
+      const ch = r[1];
+      const prev = seen.get(ch);
+      if (!prev) {
+        seen.set(ch, r);
+        continue;
+      }
+      const rExact = recordIsExact(r);
+      const pExact = recordIsExact(prev);
+      if (rExact && !pExact) {
+        seen.set(ch, r);
+      } else if (rExact === pExact && r[2] > prev[2]) {
+        seen.set(ch, r);
+      }
+    }
+    return Array.from(seen.values());
+  }
+
+  function compareByExactThenScore(a, b, scoreCtx) {
+    const ae = recordIsExact(a);
+    const be = recordIsExact(b);
+    if (ae !== be) return ae ? -1 : 1;
+    return computeScore(b, scoreCtx) - computeScore(a, scoreCtx);
   }
 
   /**
@@ -126,6 +186,23 @@
       weights.trigram * trigramScore +
       weights.recency * recencyScore +
       weights.position * positionScore;
+
+    // Explicit isExact (boolean) enables match-quality term for fuzzy ranking.
+    if (record.isExact === true || record.isExact === false) {
+      const mqW =
+        ctx.weightMatchQuality !== undefined
+          ? ctx.weightMatchQuality
+          : WEIGHT_MATCH_QUALITY;
+      const mq =
+        record.isExact
+          ? ctx.matchQualityExact !== undefined
+            ? ctx.matchQualityExact
+            : MATCH_QUALITY_EXACT
+          : ctx.matchQualityFuzzy !== undefined
+            ? ctx.matchQualityFuzzy
+            : MATCH_QUALITY_FUZZY;
+      score += mqW * mq;
+    }
 
     const tradBoost =
       ctx.traditionalBoost !== undefined ? ctx.traditionalBoost : TRADITIONAL_BOOST;
@@ -193,6 +270,79 @@
     const scoreCtx = Object.assign({}, ctx || {}, { strokeSeq: prefix });
     unique.sort((a, b) => computeScore(b, scoreCtx) - computeScore(a, scoreCtx));
     return unique;
+  }
+
+  const EXACT_THRESHOLD = 3;
+  const STROKE_CODES = [1, 2, 3, 4, 5];
+
+  /**
+   * Exact prefix search, with one-stroke fuzzy substitution when |exact| < 3.
+   * Exact matches always precede fuzzy matches.
+   */
+  function searchWithFuzzy(prefix, allRecords, ctx) {
+    const exactRaw = searchPrefix(prefix, allRecords, ctx);
+    if (
+      !prefix ||
+      !prefix.length ||
+      prefix.includes(6) ||
+      exactRaw.length >= EXACT_THRESHOLD
+    ) {
+      return exactRaw;
+    }
+
+    const exact = exactRaw.map((r) => tagRecord(r, true));
+    const seen = new Set(exact.map((r) => r[1]));
+    const fuzzy = [];
+    const scoreCtx = Object.assign({}, ctx || {}, { strokeSeq: prefix });
+
+    for (let pos = 0; pos < prefix.length; pos++) {
+      const original = prefix[pos];
+      if (original === 6) continue;
+      for (const sub of STROKE_CODES) {
+        if (sub === original) continue;
+        const modified = prefix.slice();
+        modified[pos] = sub;
+        const matches = searchPrefix(modified, allRecords, scoreCtx);
+        for (const rec of matches) {
+          if (!seen.has(rec[1])) {
+            seen.add(rec[1]);
+            fuzzy.push(tagRecord(rec, false));
+          }
+        }
+      }
+    }
+
+    fuzzy.sort((a, b) => compareByExactThenScore(a, b, scoreCtx));
+    return exact.concat(fuzzy);
+  }
+
+  /**
+   * Merge full-stroke and wubi-hua indexes (dedupe by char; exact before fuzzy).
+   */
+  function searchMerged(prefix, primaryRecords, secondaryRecords, ctx, opts) {
+    opts = opts || {};
+    const searchFn = opts.fuzzy ? searchWithFuzzy : searchPrefix;
+    const primary = searchFn(prefix, primaryRecords, ctx);
+    const scoreCtx = Object.assign({}, ctx || {}, { strokeSeq: prefix });
+    if (!secondaryRecords || !secondaryRecords.length) {
+      return primary;
+    }
+    const secondary = searchFn(prefix, secondaryRecords, ctx);
+    return dedupPreferExact(primary.concat(secondary)).sort((a, b) =>
+      compareByExactThenScore(a, b, scoreCtx)
+    );
+  }
+
+  /**
+   * Top association characters from bigrams for mid-typing injection.
+   */
+  function associationChars(prevChar, bigrams, limit) {
+    limit = limit === undefined ? 2 : limit;
+    if (!prevChar || !bigrams || !bigrams[prevChar]) return [];
+    return Object.entries(bigrams[prevChar])
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([ch]) => ch);
   }
 
   function predictPhrase(seed, bigrams, trigrams, opts) {
@@ -289,7 +439,22 @@
     computeScore,
     trigramContribution,
     dedup,
+    dedupPreferExact,
     searchPrefix,
+    searchWithFuzzy,
+    searchMerged,
+    associationChars,
     predictPhrase,
+    EXACT_THRESHOLD,
+    recordIsExact,
+    get WEIGHT_MATCH_QUALITY() {
+      return WEIGHT_MATCH_QUALITY;
+    },
+    get MATCH_QUALITY_EXACT() {
+      return MATCH_QUALITY_EXACT;
+    },
+    get MATCH_QUALITY_FUZZY() {
+      return MATCH_QUALITY_FUZZY;
+    },
   };
 });

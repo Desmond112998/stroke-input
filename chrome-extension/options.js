@@ -3,19 +3,43 @@
 const DEFAULTS = Object.freeze({
   toggleKey: "`",
   interceptPassword: false,
+  wubiHuaMode: false,
+  showAssociations: true,
+  numpadStrokes: false,
+  chinesePunctuation: true,
 });
 
 const toggleKeyInput = document.getElementById("toggleKey");
 const interceptPasswordInput = document.getElementById("interceptPassword");
+const wubiHuaModeInput = document.getElementById("wubiHuaMode");
+const showAssociationsInput = document.getElementById("showAssociations");
+const numpadStrokesInput = document.getElementById("numpadStrokes");
+const chinesePunctuationInput = document.getElementById("chinesePunctuation");
 const statusEl = document.getElementById("status");
 
 function setStatus(msg) {
   statusEl.textContent = msg || "";
 }
 
+function readForm() {
+  return {
+    toggleKey: (toggleKeyInput.value || "").trim() || DEFAULTS.toggleKey,
+    interceptPassword: interceptPasswordInput.checked,
+    wubiHuaMode: wubiHuaModeInput.checked,
+    showAssociations: showAssociationsInput.checked,
+    numpadStrokes: numpadStrokesInput.checked,
+    chinesePunctuation: chinesePunctuationInput.checked,
+  };
+}
+
 function applyToForm(settings) {
-  toggleKeyInput.value = settings.toggleKey || DEFAULTS.toggleKey;
-  interceptPasswordInput.checked = !!settings.interceptPassword;
+  const s = { ...DEFAULTS, ...(settings || {}) };
+  toggleKeyInput.value = s.toggleKey || DEFAULTS.toggleKey;
+  interceptPasswordInput.checked = !!s.interceptPassword;
+  wubiHuaModeInput.checked = !!s.wubiHuaMode;
+  showAssociationsInput.checked = s.showAssociations !== false;
+  numpadStrokesInput.checked = !!s.numpadStrokes;
+  chinesePunctuationInput.checked = s.chinesePunctuation !== false;
 }
 
 function load() {
@@ -50,15 +74,12 @@ toggleKeyInput.addEventListener("keydown", (e) => {
 });
 
 document.getElementById("save").addEventListener("click", () => {
-  const key = (toggleKeyInput.value || "").trim();
-  if (!key) {
+  const settings = readForm();
+  if (!settings.toggleKey) {
     setStatus("開關按鍵唔可以留空");
     return;
   }
-  save({
-    toggleKey: key,
-    interceptPassword: interceptPasswordInput.checked,
-  });
+  save(settings);
 });
 
 document.getElementById("reset").addEventListener("click", () => {

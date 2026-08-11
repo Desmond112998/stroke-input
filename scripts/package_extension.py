@@ -40,6 +40,7 @@ REQUIRED_FILES = [
     "options.js",
     "style.css",
     "data/strokes.json",
+    "data/strokes_wubi.json",
     "data/phrases.json",
     "data/bigrams.json",
     "data/trigrams.json",

@@ -54,6 +54,7 @@ def to_chrome_dict() -> dict[str, Any]:
         "userFreqCap": USER_FREQ_CAP,
         "recencyTauDays": RECENCY_TAU_DAYS,
         "traditionalBoost": TRADITIONAL_BOOST,
+        "weightMatchQuality": WEIGHT_MATCH_QUALITY,
         "matchQualityExact": MATCH_QUALITY_EXACT,
         "matchQualityFuzzy": MATCH_QUALITY_FUZZY,
         "trigramBadgeMinContribution": TRIGRAM_BADGE_MIN_CONTRIBUTION,

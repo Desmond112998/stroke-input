@@ -103,6 +103,38 @@
       <p class="hint">預設關閉，避免密碼欄被攔截。</p>
     </div>
 
+    <div class="field">
+      <div class="row">
+        <input id="wubiHuaMode" type="checkbox" />
+        <label for="wubiHuaMode" style="margin:0;font-weight:500">五筆劃模式（頭四尾一）</label>
+      </div>
+      <p class="hint">超過五畫嘅字可用「頭四畫 + 尾一畫」縮碼輸入（例如「毓」→ 31555）。</p>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <input id="showAssociations" type="checkbox" />
+        <label for="showAssociations" style="margin:0;font-weight:500">顯示關聯字</label>
+      </div>
+      <p class="hint">有上文時，將常用接續字插入候選第 2／3 位（標「聯」）。</p>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <input id="numpadStrokes" type="checkbox" />
+        <label for="numpadStrokes" style="margin:0;font-weight:500">數字鍵盤輸入筆畫</label>
+      </div>
+      <p class="hint">啟用後 Numpad1–6 對應一丨丿丶乙＊；上方數字鍵仍然用嚟揀字。</p>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <input id="chinesePunctuation" type="checkbox" />
+        <label for="chinesePunctuation" style="margin:0;font-weight:500">中文標點</label>
+      </div>
+      <p class="hint">中文模式、無筆畫緩衝時，, . ? ! ; : 直接上屏全形標點。</p>
+    </div>
+
     <div class="row">
       <button id="save" type="button">儲存</button>
       <button id="reset" type="button" class="secondary">還原預設</button>
