@@ -7,7 +7,6 @@ const DEFAULTS = Object.freeze({
   showAssociations: true,
   numpadStrokes: false,
   chinesePunctuation: true,
-  g6PhraseCodes: true,
 });
 
 const toggleKeyInput = document.getElementById("toggleKey");
@@ -16,7 +15,6 @@ const wubiHuaModeInput = document.getElementById("wubiHuaMode");
 const showAssociationsInput = document.getElementById("showAssociations");
 const numpadStrokesInput = document.getElementById("numpadStrokes");
 const chinesePunctuationInput = document.getElementById("chinesePunctuation");
-const g6PhraseCodesInput = document.getElementById("g6PhraseCodes");
 const statusEl = document.getElementById("status");
 
 function setStatus(msg) {
@@ -31,7 +29,6 @@ function readForm() {
     showAssociations: showAssociationsInput.checked,
     numpadStrokes: numpadStrokesInput.checked,
     chinesePunctuation: chinesePunctuationInput.checked,
-    g6PhraseCodes: g6PhraseCodesInput.checked,
   };
 }
 
@@ -43,7 +40,6 @@ function applyToForm(settings) {
   showAssociationsInput.checked = s.showAssociations !== false;
   numpadStrokesInput.checked = !!s.numpadStrokes;
   chinesePunctuationInput.checked = s.chinesePunctuation !== false;
-  g6PhraseCodesInput.checked = s.g6PhraseCodes !== false;
 }
 
 function load() {

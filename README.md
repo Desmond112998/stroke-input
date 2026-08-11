@@ -12,16 +12,15 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Real-time prefix matching with binary search on a sorted stroke index
 - Fuzzy one-stroke correction when exact matches are scarce (< 3)
 - Optional 五筆劃 (頭四尾一) short codes for characters with more than 5 strokes
-- G6-style phrase codes (頭字頭三畫 + 尾字頭三畫), e.g. 香港 ← 丿一丨丶丶一 (marked 詞)
 - Mid-typing association characters from bigrams (marked 聯)
 - Composite ranking: static frequency, user adaptation, bigram/trigram context, recency, position
 - Cantonese frequency boosts — common Cantonese characters (係、唔、咗、嘅、冇…) rank higher
 - Bigram model for contextual prediction (P(char₂ | char₁) from phrase co-occurrence)
-- Phrase suggestions after character selection (Cantonese collocations included)
+- Recursive phrase suggestions after character selection; selecting a suggestion continues from its tail character
 - Compatible with multiple stroke order standards (macOS, Nokia, Conway)
 - User frequency adaptation persisted via `chrome.storage`
 - Shift to toggle Chinese/English mode; configurable toggle key (default backtick `` ` ``) to toggle on/off
-- Options page: toggle key, password fields, 五筆劃, G6 phrase codes, associations, numpad strokes, Chinese punctuation
+- Options page: toggle key, password fields, 五筆劃, associations, numpad strokes, Chinese punctuation
 - Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
 - Works with `<input>`, `<textarea>`, and `contenteditable` elements (password fields off by default)
 - Overlay follows the caret / text field (drag once to pin a manual position)
@@ -155,7 +154,6 @@ chrome-extension/           # Chrome extension (Manifest V3)
     ├── strokes.json        # Sorted [sequence, char, freq, scriptTag?]
     ├── strokes_wubi.json   # 五筆劃 short codes (頭四尾一), optional mode
     ├── phrases.json        # Phrase dict indexed by first char
-    ├── phrases_by_code.json # G6 phrase codes [code, phrase, freq]
     ├── bigrams.json        # Bigram model {char1: {char2: score}}
     ├── trigrams.json       # Trigram model {p2: {p1: {char: score}}}
     ├── ranking_config.json # Shared ranking weights (Python↔JS)

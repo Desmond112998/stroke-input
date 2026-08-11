@@ -42,7 +42,7 @@ The repository has both source and generated data. Treat generated files careful
 1. `scripts\download_stroke_data.py` obtains/parses Conway stroke data into `data\stroke_db.msgpack`.
 2. `scripts\generate_phrase_dict.py` builds Traditional Chinese phrase data from CC-CEDICT-derived sources.
 3. `scripts\generate_cantonese_data.py` creates Cantonese frequency, phrase, and bigram seed data.
-4. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\` (full strokes, optional 五筆劃 index, G6 `phrases_by_code.json`, unified n-grams, ranking config). Per-character stroke variants are capped on export.
+4. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\` (full strokes, optional 五筆劃 index, unified n-grams, ranking config). Per-character stroke variants are capped on export.
 5. `scripts\package_extension.py` rebuilds/validates/packages the extension zip.
 6. `scripts\generate_parity_fixture.py` refreshes the Python↔JS ranking parity fixture used by tests.
 7. Optional assets: `scripts\generate_icons.py`, `scripts\generate_screenshots.py` (Web Store images). `scripts\check_keys.py` is a local keyboard-name debug helper (requires the `keyboard` package; not part of the extension runtime).
