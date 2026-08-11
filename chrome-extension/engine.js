@@ -30,13 +30,15 @@
   let activeWeights = Object.assign({}, BUILTIN_WEIGHTS);
   let USER_FREQ_CAP = 100;
   let RECENCY_TAU_SEC = 30 * 86400;
-  let TRADITIONAL_BOOST = 0.05;
+  let TRADITIONAL_BOOST = 0.01;
   let TRIGRAM_BADGE_MIN = 0.02;
   // Match quality is only applied when a record has an explicit isExact flag
   // (fuzzy path). Untagged prefix results keep parity with static-only scores.
   let WEIGHT_MATCH_QUALITY = 0.1;
   let MATCH_QUALITY_EXACT = 1.0;
   let MATCH_QUALITY_FUZZY = 0.5;
+  let WEIGHT_STROKE_PROXIMITY = 0.4;
+  let STROKE_PROXIMITY_PARTIAL = 0.35;
 
   const BEAM_WIDTH = 5;
   const BEAM_DEPTH = 3;
@@ -66,6 +68,12 @@
     if (typeof cfg.trigramBadgeMinContribution === "number") {
       TRIGRAM_BADGE_MIN = cfg.trigramBadgeMinContribution;
     }
+    if (typeof cfg.weightStrokeProximity === "number") {
+      WEIGHT_STROKE_PROXIMITY = cfg.weightStrokeProximity;
+    }
+    if (typeof cfg.strokeProximityPartial === "number") {
+      STROKE_PROXIMITY_PARTIAL = cfg.strokeProximityPartial;
+    }
     if (typeof cfg.weightMatchQuality === "number") {
       WEIGHT_MATCH_QUALITY = cfg.weightMatchQuality;
     }
@@ -87,10 +95,24 @@
       recencyTauSec: RECENCY_TAU_SEC,
       traditionalBoost: TRADITIONAL_BOOST,
       trigramBadgeMinContribution: TRIGRAM_BADGE_MIN,
+      weightStrokeProximity: WEIGHT_STROKE_PROXIMITY,
+      strokeProximityPartial: STROKE_PROXIMITY_PARTIAL,
       weightMatchQuality: WEIGHT_MATCH_QUALITY,
       matchQualityExact: MATCH_QUALITY_EXACT,
       matchQualityFuzzy: MATCH_QUALITY_FUZZY,
     };
+  }
+
+  /** Prefer exact-complete and shorter remaining stroke counts (first-key UX). */
+  function strokeProximityScore(seqStr, prefixLen, partialScale) {
+    if (!seqStr || !prefixLen) return 0;
+    const seqLen = seqStr.length;
+    if (seqLen < prefixLen) return 0;
+    const extra = seqLen - prefixLen;
+    if (extra === 0) return 1.0;
+    const scale =
+      partialScale !== undefined ? partialScale : STROKE_PROXIMITY_PARTIAL;
+    return scale / (1 + extra);
   }
 
   function recordIsExact(record) {
@@ -195,6 +217,20 @@
       weights.trigram * trigramScore +
       weights.recency * recencyScore +
       weights.position * positionScore;
+
+    // Stroke-length proximity (typed prefix vs full character encoding)
+    const prefLen = (ctx.strokeSeq || []).length;
+    if (prefLen > 0 && record[0]) {
+      const proxW =
+        ctx.weightStrokeProximity !== undefined
+          ? ctx.weightStrokeProximity
+          : WEIGHT_STROKE_PROXIMITY;
+      const partial =
+        ctx.strokeProximityPartial !== undefined
+          ? ctx.strokeProximityPartial
+          : STROKE_PROXIMITY_PARTIAL;
+      score += proxW * strokeProximityScore(record[0], prefLen, partial);
+    }
 
     // Explicit isExact (boolean) enables match-quality term for fuzzy ranking.
     if (record.isExact === true || record.isExact === false) {
@@ -574,5 +610,12 @@
     get MATCH_QUALITY_FUZZY() {
       return MATCH_QUALITY_FUZZY;
     },
+    get WEIGHT_STROKE_PROXIMITY() {
+      return WEIGHT_STROKE_PROXIMITY;
+    },
+    get STROKE_PROXIMITY_PARTIAL() {
+      return STROKE_PROXIMITY_PARTIAL;
+    },
+    strokeProximityScore,
   };
 });

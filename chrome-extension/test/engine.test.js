@@ -64,7 +64,10 @@ describe("StrokeInputEngine.computeScore", () => {
         userPositions: { "1": { 一: [0, 0] } },
       });
       const w = Engine.DEFAULT_WEIGHTS;
-      assert.ok(Math.abs(score - (w.recency * 1.0 + w.position * 1.0)) < 1e-9);
+      const prox = Engine.WEIGHT_STROKE_PROXIMITY * 1.0; // exact-complete
+      assert.ok(
+        Math.abs(score - (w.recency * 1.0 + w.position * 1.0 + prox)) < 1e-9
+      );
     });
   });
 
@@ -196,6 +199,24 @@ describe("StrokeInputEngine.match quality", () => {
   });
 });
 
+describe("StrokeInputEngine.stroke proximity ranking", () => {
+  it("ranks exact-complete short chars above long high-freq chars", () => {
+    const records = [
+      ["1", "一", 0.03],
+      ["1325", "冇", 0.97],
+      ["111125134154544", "諗", 0.88, "t"],
+      ["1251112", "車", 0.88, "t"],
+    ];
+    const out = Engine.searchPrefix([1], records, {});
+    assert.equal(out[0][1], "一");
+    assert.ok(out.findIndex((r) => r[1] === "冇") < out.findIndex((r) => r[1] === "諗"));
+  });
+
+  it("applies only a small traditional boost (tie-breaker)", () => {
+    assert.ok(Engine.TRADITIONAL_BOOST <= 0.015);
+  });
+});
+
 describe("StrokeInputEngine.searchPhrasesByCode", () => {
   const records = [
     ["312441", "香港", 0.9],
@@ -275,17 +296,17 @@ describe("StrokeInputEngine.maybeAutoPin", () => {
 
 describe("StrokeInputEngine.pins affect position score", () => {
   it("pinned char gets full position weight", () => {
-    const score = Engine.computeScore(["jk", "你", 0], {
-      strokeSeq: ["j", "k"], // join → "jk" wait strokes are numbers
+    const unpinned = Engine.computeScore(["12", "你", 0], {
+      strokeSeq: [1, 2],
     });
-    // strokeSeq.join for numbers [1,2] → "12"
     const pinned = Engine.computeScore(["12", "你", 0], {
       strokeSeq: [1, 2],
       userPins: { "12": { 你: true } },
     });
+    const prox = Engine.WEIGHT_STROKE_PROXIMITY * 1.0;
     assert.ok(
-      Math.abs(pinned - Engine.DEFAULT_WEIGHTS.position * 1.0) < 1e-9
+      Math.abs(pinned - (Engine.DEFAULT_WEIGHTS.position * 1.0 + prox)) < 1e-9
     );
-    assert.ok(pinned >= score);
+    assert.ok(pinned > unpinned);
   });
 });
