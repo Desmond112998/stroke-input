@@ -26,6 +26,11 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "chrome-extension" / "data
 # but underrepresented in Mandarin frequency tables.
 # Values represent target frequency (0-1 scale).
 CANTONESE_FREQ_OVERRIDES: dict[str, float] = {
+    # Ultra-common single-stroke / short characters (must surface on first keys)
+    "一": 0.995,  # jat1 - numeral / generic "one"; Zipf alone buries it under colloquial overrides
+    "丨": 0.40,   # stroke name char; keep modest
+    "不": 0.70,   # bat1 - common negation (written)
+
     # Cantonese-exclusive function words (highest frequency)
     "係": 0.99,   # hai6 - "is" (copula)
     "唔": 0.99,   # m4 - "not" (negation)

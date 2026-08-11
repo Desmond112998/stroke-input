@@ -30,7 +30,7 @@
   let activeWeights = Object.assign({}, BUILTIN_WEIGHTS);
   let USER_FREQ_CAP = 100;
   let RECENCY_TAU_SEC = 30 * 86400;
-  let TRADITIONAL_BOOST = 0.05;
+  let TRADITIONAL_BOOST = 0.01;
   let TRIGRAM_BADGE_MIN = 0.02;
   // Match quality is only applied when a record has an explicit isExact flag
   // (fuzzy path). Untagged prefix results keep parity with static-only scores.

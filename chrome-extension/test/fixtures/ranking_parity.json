@@ -8,7 +8,7 @@
     "contextBoost": 0.15,
     "matchQuality": 0.1,
     "userFreqCap": 100.0,
-    "traditionalBoost": 0.05
+    "traditionalBoost": 0.01
   },
   "js_weights": {
     "staticFreq": 0.35,
@@ -66,7 +66,7 @@
       ],
       "is_exact": true,
       "context_boost": 0.0,
-      "python_score": 0.225,
+      "python_score": 0.185,
       "notes": "Static-only Python score (user/context/trigram/recency/position off)."
     },
     {
