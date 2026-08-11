@@ -23,7 +23,8 @@ WEIGHT_MATCH_QUALITY = 0.10  # documented for Python RankerWeights parity; not i
 
 USER_FREQ_CAP = 100.0
 RECENCY_TAU_DAYS = 30.0
-TRADITIONAL_BOOST = 0.05
+# Tie-breaker only — 0.05 previously outranked ~0.14 of static frequency.
+TRADITIONAL_BOOST = 0.01
 MATCH_QUALITY_EXACT = 1.0
 MATCH_QUALITY_FUZZY = 0.5
 TRIGRAM_BADGE_MIN_CONTRIBUTION = 0.02

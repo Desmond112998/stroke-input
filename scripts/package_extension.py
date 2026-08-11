@@ -42,6 +42,7 @@ REQUIRED_FILES = [
     "data/strokes.json",
     "data/strokes_wubi.json",
     "data/phrases.json",
+    "data/phrases_by_code.json",
     "data/bigrams.json",
     "data/trigrams.json",
     "data/cantonese_freq.json",

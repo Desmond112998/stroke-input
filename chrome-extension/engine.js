@@ -30,7 +30,7 @@
   let activeWeights = Object.assign({}, BUILTIN_WEIGHTS);
   let USER_FREQ_CAP = 100;
   let RECENCY_TAU_SEC = 30 * 86400;
-  let TRADITIONAL_BOOST = 0.05;
+  let TRADITIONAL_BOOST = 0.01;
   let TRIGRAM_BADGE_MIN = 0.02;
   // Match quality is only applied when a record has an explicit isExact flag
   // (fuzzy path). Untagged prefix results keep parity with static-only scores.
@@ -368,6 +368,41 @@
   }
 
   /**
+   * G6-style phrase-by-code lookup (T2.4).
+   * Records: sorted [code, phrase, freq]. Prefix match via binary search.
+   * Returns tagged copies with record[4] === "phrase".
+   */
+  function searchPhrasesByCode(prefix, phraseRecords, opts) {
+    opts = opts || {};
+    const minLen = opts.minLen !== undefined ? opts.minLen : 2;
+    const cap = opts.cap !== undefined ? opts.cap : 40;
+    if (!prefix || prefix.length < minLen) return [];
+    if (!phraseRecords || !phraseRecords.length) return [];
+    if (prefix.includes(6)) return []; // wildcard not applied to phrase codes (MVP)
+
+    const pfx = prefix.join("");
+    let lo = 0;
+    let hi = phraseRecords.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (phraseRecords[mid][0] < pfx) lo = mid + 1;
+      else hi = mid;
+    }
+    const hits = [];
+    for (let i = lo; i < phraseRecords.length; i++) {
+      const seq = phraseRecords[i][0];
+      if (!seq.startsWith(pfx)) break;
+      const tagged = phraseRecords[i].slice();
+      while (tagged.length < 5) tagged.push(null);
+      tagged[4] = "phrase";
+      hits.push(tagged);
+    }
+    hits.sort((a, b) => b[2] - a[2] || (a[1] < b[1] ? -1 : 1));
+    if (hits.length > cap) hits.length = cap;
+    return hits;
+  }
+
+  /**
    * Top association characters from bigrams for mid-typing injection.
    */
   function associationChars(prevChar, bigrams, limit) {
@@ -523,6 +558,7 @@
     searchPrefix,
     searchWithFuzzy,
     searchMerged,
+    searchPhrasesByCode,
     associationChars,
     learnedPhrasesFor,
     maybeAutoPin,
