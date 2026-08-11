@@ -10,7 +10,7 @@
   },
   "userFreqCap": 100.0,
   "recencyTauDays": 30.0,
-  "traditionalBoost": 0.05,
+  "traditionalBoost": 0.01,
   "weightMatchQuality": 0.1,
   "matchQualityExact": 1.0,
   "matchQualityFuzzy": 0.5,

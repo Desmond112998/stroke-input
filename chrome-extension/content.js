@@ -32,6 +32,7 @@
     showAssociations: true,
     numpadStrokes: false,
     chinesePunctuation: true,
+    g6PhraseCodes: true,
   });
   let settings = {
     toggleKey: DEFAULT_SETTINGS.toggleKey,
@@ -40,6 +41,7 @@
     showAssociations: DEFAULT_SETTINGS.showAssociations,
     numpadStrokes: DEFAULT_SETTINGS.numpadStrokes,
     chinesePunctuation: DEFAULT_SETTINGS.chinesePunctuation,
+    g6PhraseCodes: DEFAULT_SETTINGS.g6PhraseCodes,
   };
 
   // Pure helpers live in engine.js (loaded before this script).
@@ -57,6 +59,7 @@
   let strokeSeq = [];
   let allRecords = []; // sorted [seq, char, freq]
   let wubiRecords = []; // 頭四尾一 index (optional)
+  let phrasesByCode = []; // G6 [code, phrase, freq] sorted by code
   let phrases = {};    // first_char -> [[phrase, freq], ...]
   let associationSet = new Set(); // chars injected as mid-typing associations
   let bigrams = {};    // char -> {char2: score, ...}
@@ -76,8 +79,10 @@
   let userFreq = {};         // char -> count
   let userTimestamps = {};   // char -> last-selection Unix timestamp (seconds) — new
   let userPositions = {};    // strokeSeqKey -> {char -> [rank, ...]} — new
+  let userPins = {};         // strokeSeqKey -> {char: true} (T3.4 / C2)
   let userFreqDirty = false;
   let userFreqSaveTimer = null;
+  let wildcardRefreshTimer = null;
 
   // Shift-toggle tracking: detect bare Shift press (down→up with no other key)
   let shiftDown = false;
@@ -102,11 +107,13 @@
             userFreq       = stored.counts      || {};
             userTimestamps = stored.timestamps  || {};
             userPositions  = stored.positions   || {};
+            userPins       = stored.pins        || {};
           } else {
             // legacy flat format upgrade
             userFreq = stored;
             userTimestamps = {};
             userPositions  = {};
+            userPins       = {};
           }
         }
       });
@@ -116,7 +123,13 @@
   function saveUserFreq() {
     if (!userFreqDirty) return;
     try {
-      const payload = { v: 2, counts: userFreq, timestamps: userTimestamps, positions: userPositions };
+      const payload = {
+        v: 2,
+        counts: userFreq,
+        timestamps: userTimestamps,
+        positions: userPositions,
+        pins: userPins,
+      };
       chrome.storage.local.set({ userFreqV2: payload }, () => {
         if (chrome.runtime.lastError) return;
         userFreqDirty = false;
@@ -137,6 +150,9 @@
       const ranks = userPositions[seqKey][char];
       ranks.push(rank);
       if (ranks.length > MAX_RANK_HISTORY) ranks.shift();
+      if (Engine && Engine.maybeAutoPin) {
+        Engine.maybeAutoPin(seqKey, char, userPositions, userPins, 3);
+      }
     }
     userFreqDirty = true;
     // Debounce save: write at most every 5 seconds
@@ -195,20 +211,29 @@
   async function loadData() {
     if (dataLoaded) return;
     try {
-      const [strokeResp, phraseResp, bigramResp, trigramResp, rankingResp, wubiResp] =
-        await Promise.all([
-          fetch(chrome.runtime.getURL("data/strokes.json")),
-          fetch(chrome.runtime.getURL("data/phrases.json")),
-          fetch(chrome.runtime.getURL("data/bigrams.json")),
-          fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
-          fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
-          fetch(chrome.runtime.getURL("data/strokes_wubi.json")).catch(() => null),
-        ]);
+      const [
+        strokeResp,
+        phraseResp,
+        bigramResp,
+        trigramResp,
+        rankingResp,
+        wubiResp,
+        phraseCodeResp,
+      ] = await Promise.all([
+        fetch(chrome.runtime.getURL("data/strokes.json")),
+        fetch(chrome.runtime.getURL("data/phrases.json")),
+        fetch(chrome.runtime.getURL("data/bigrams.json")),
+        fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
+        fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
+        fetch(chrome.runtime.getURL("data/strokes_wubi.json")).catch(() => null),
+        fetch(chrome.runtime.getURL("data/phrases_by_code.json")).catch(() => null),
+      ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
       bigrams = await bigramResp.json();
       trigrams = trigramResp ? await trigramResp.json() : {};
       wubiRecords = wubiResp ? await wubiResp.json() : [];
+      phrasesByCode = phraseCodeResp ? await phraseCodeResp.json() : [];
       if (rankingResp && Engine) {
         try {
           Engine.setConfig(await rankingResp.json());
@@ -219,6 +244,7 @@
       console.log(
         `[筆畫] Loaded ${allRecords.length} characters, ` +
         `${wubiRecords.length} wubi entries, ` +
+        `${phrasesByCode.length} phrase codes, ` +
         `${Object.keys(phrases).length} phrase buckets`
       );
     } catch (e) {
@@ -232,6 +258,7 @@
       userFreq,
       userTimestamps,
       userPositions,
+      userPins,
       strokeSeq,
       lastSelectedChar,
       prevSelectedChar,
@@ -278,6 +305,29 @@
         results = head.concat(injected, rest);
       }
     }
+
+    // G6 phrase-by-code (頭字頭三 + 尾字頭三): merge with character candidates
+    if (
+      settings.g6PhraseCodes &&
+      Engine.searchPhrasesByCode &&
+      phrasesByCode.length &&
+      prefix.length >= 2
+    ) {
+      const phraseHits = Engine.searchPhrasesByCode(prefix, phrasesByCode, {
+        minLen: 2,
+        cap: 30,
+      });
+      if (phraseHits.length) {
+        if (prefix.length >= 6) {
+          // Full six-code: phrase hits lead so「香港」is easy to pick
+          results = phraseHits.concat(results);
+        } else {
+          const head = results.slice(0, 1);
+          const rest = results.slice(1);
+          results = head.concat(phraseHits, rest);
+        }
+      }
+    }
     return results;
   }
 
@@ -294,13 +344,19 @@
   function autoLearnPhrase() {
     if (consecutiveChars.length >= 2) {
       const phrase = consecutiveChars.join("");
-      // Store in userPositions (reuse structure) under special key
+      // Consumed by Engine.learnedPhrasesFor when building phrase suggestions (T3.4)
       if (!userPositions["__phrases__"]) userPositions["__phrases__"] = {};
-      userPositions["__phrases__"][phrase] = (userPositions["__phrases__"][phrase] || []);
+      if (!userPositions["__phrases__"][phrase]) {
+        userPositions["__phrases__"][phrase] = [];
+      }
       userPositions["__phrases__"][phrase].push(1);
+      if (userPositions["__phrases__"][phrase].length > MAX_RANK_HISTORY) {
+        userPositions["__phrases__"][phrase].shift();
+      }
       userFreqDirty = true;
     }
-    consecutiveChars = [];
+    // Keep the last character so the next pick can extend the learned chain
+    consecutiveChars = consecutiveChars.slice(-1);
   }
   // When Chrome reloads the extension, old content scripts remain alive.
   // Signal any previous instance to self-destruct via a custom event.
@@ -469,13 +525,16 @@
           if (isTrigramDriven(r)) {
             badges.push('<span class="tri-badge" title="觸發：上文脈絡">★</span>');
           }
+          if (r[4] === "phrase") {
+            badges.push('<span class="phrase-badge" title="詞組碼">詞</span>');
+          }
           if (r[4] === "assoc" || associationSet.has(r[1])) {
             badges.push('<span class="assoc-badge" title="關聯字">聯</span>');
           }
           if (r.isExact === false) {
             badges.push('<span class="fuzzy-badge" title="模糊匹配">∼</span>');
           }
-          return `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${badges.join("")}${r[1]}</span>`;
+          return `<span class="stroke-candidate${i === highlightIdx ? " highlighted" : ""}" data-idx="${i}"><span class="num">${i + 1}.</span>${badges.join("")}${escapeHtml(r[1])}</span>`;
         })
         .join("");
       const totalPages = Math.ceil(candidates.length / PAGE_SIZE);
@@ -491,14 +550,27 @@
     phrasePage = 0;
     // C4: default highlight = 0 (first candidate pre-selected)
     highlightIdx = 0;
+    if (wildcardRefreshTimer) {
+      clearTimeout(wildcardRefreshTimer);
+      wildcardRefreshTimer = null;
+    }
     if (strokeSeq.length === 0) {
       candidates = [];
       page = 0;
-    } else {
+      render();
+      return;
+    }
+    const run = () => {
       candidates = searchPrefix(strokeSeq);
       page = 0;
+      render();
+    };
+    // Debounce wildcard scans (full-table regex) slightly (T3.3)
+    if (strokeSeq.includes(6)) {
+      wildcardRefreshTimer = setTimeout(run, 40);
+      return;
     }
-    render();
+    run();
   }
 
   // ── Text Insertion ─────────────────────────────────────────────
@@ -553,45 +625,53 @@
     const item = candidates[globalIdx];
     if (!item) return;
 
-    const char = item[1];
-    insertText(char);
+    const text = item[1];
+    const isPhraseCand = item[4] === "phrase" || (typeof text === "string" && text.length > 1);
+    insertText(text);
 
-    // Advance two-slot history for trigram context
-    prevSelectedChar = lastSelectedChar;
-    lastSelectedChar = char;
-
-    // Track user frequency, recency, and position
-    bumpUserFreq(char, globalIdx);
-
-    // Auto-learn consecutive phrase
-    consecutiveChars.push(char);
+    if (isPhraseCand) {
+      prevSelectedChar =
+        text.length >= 2 ? text[text.length - 2] : lastSelectedChar;
+      lastSelectedChar = text[text.length - 1];
+      for (const ch of text) bumpUserFreq(ch, globalIdx);
+      consecutiveChars = consecutiveChars.concat(Array.from(text));
+      autoLearnPhrase();
+    } else {
+      prevSelectedChar = lastSelectedChar;
+      lastSelectedChar = text;
+      bumpUserFreq(text, globalIdx);
+      consecutiveChars.push(text);
+      autoLearnPhrase();
+    }
 
     strokeSeq = [];
     candidates = [];
     page = 0;
 
-    // Multi-step phrase suggestion (B5): beam-search from selected char
-    // Merge with static phrase dictionary: static phrases take precedence
-    const staticPhrases = (phrases[char] && phrases[char].length > 0)
-      ? phrases[char].map(p => ({ phrase: p[0], score: p[1], isStatic: true }))
+    // Follow-up suggestions from the last committed character
+    const seed = lastSelectedChar;
+    const staticPhrases = (phrases[seed] && phrases[seed].length > 0)
+      ? phrases[seed].map(p => ({ phrase: p[0], score: p[1], isStatic: true }))
       : [];
-    const beamPhrases = predictPhrase(char)
+    const learned = Engine.learnedPhrasesFor
+      ? Engine.learnedPhrasesFor(seed, userPositions, 9)
+      : [];
+    const beamPhrases = predictPhrase(seed)
       .filter(p => p.phrase.length > 1)
       .map(p => ({ ...p, isStatic: false }));
 
-    // Build merged phrase list: static first, then beam (no duplicates)
-    const seen = new Set(staticPhrases.map(p => p.phrase));
-    const merged = [...staticPhrases];
-    for (const bp of beamPhrases) {
-      if (!seen.has(bp.phrase)) {
-        seen.add(bp.phrase);
-        merged.push(bp);
+    const seen = new Set();
+    const merged = [];
+    for (const group of [staticPhrases, learned, beamPhrases]) {
+      for (const p of group) {
+        if (seen.has(p.phrase)) continue;
+        seen.add(p.phrase);
+        merged.push(p);
       }
     }
 
     if (merged.length > 0) {
       phraseMode = true;
-      // Normalize to [[phrase, score]] format for existing render code
       phraseList = merged.map(p => [p.phrase, p.score]);
       phrasePage = 0;
       highlightIdx = 0;
@@ -664,6 +744,9 @@
     }
     if (typeof raw.chinesePunctuation === "boolean") {
       settings.chinesePunctuation = raw.chinesePunctuation;
+    }
+    if (typeof raw.g6PhraseCodes === "boolean") {
+      settings.g6PhraseCodes = raw.g6PhraseCodes;
     }
   }
 

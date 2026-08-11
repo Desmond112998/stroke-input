@@ -32,6 +32,10 @@ from stroke_input.data.serializer import load_msgpack  # noqa: E402
 
 OUT_DIR = _ROOT / "chrome-extension" / "data"
 
+# Cap stroke-sequence variants per character (Conway regex expansions).
+# Keep highest-frequency encodings; rare glyphs can otherwise explode to ~90 rows.
+MAX_VARIANTS_PER_CHAR = 12
+
 
 def _script_tag(flag: str) -> str | None:
     if flag == "trad":
@@ -81,6 +85,23 @@ def export_strokes() -> None:
                 if tag:
                     wrow.append(tag)
                 wubi_data.append(wrow)
+
+    # Cap per-character variants (keep highest frequency)
+    from collections import defaultdict
+
+    by_char: dict[str, list] = defaultdict(list)
+    for row in data:
+        by_char[row[1]].append(row)
+    capped: list = []
+    for rows in by_char.values():
+        rows.sort(key=lambda x: -x[2])
+        capped.extend(rows[:MAX_VARIANTS_PER_CHAR])
+    if len(capped) < len(data):
+        print(
+            f"  Variant cap {MAX_VARIANTS_PER_CHAR}/char: "
+            f"{len(data)} → {len(capped)} stroke rows"
+        )
+    data = capped
 
     data.sort(key=lambda x: x[0])
     out = OUT_DIR / "strokes.json"
@@ -155,6 +176,56 @@ def export_ranking_config() -> None:
     print(f"ranking_config.json -> {path}")
 
 
+def export_phrases_by_code() -> None:
+    """G6-style phrase codes: head-3 of first char + head-3 of last char.
+
+    Output sorted rows ``[code, phrase, freq]`` for binary-search prefix match
+    in the Chrome extension (T2.4).
+    """
+    strokes_path = OUT_DIR / "strokes.json"
+    phrases_path = OUT_DIR / "phrases.json"
+    if not strokes_path.exists() or not phrases_path.exists():
+        print("Skipping phrases_by_code (missing strokes.json or phrases.json)")
+        return
+
+    strokes = json.loads(strokes_path.read_text(encoding="utf-8"))
+    best_seq: dict[str, tuple[str, float]] = {}
+    for row in strokes:
+        seq, ch, freq = row[0], row[1], float(row[2])
+        prev = best_seq.get(ch)
+        if prev is None or freq > prev[1]:
+            best_seq[ch] = (seq, freq)
+
+    phrases_raw = json.loads(phrases_path.read_text(encoding="utf-8"))
+    rows: list[list] = []
+    seen: set[tuple[str, str]] = set()
+    skipped = 0
+    for bucket in phrases_raw.values():
+        for phrase, freq in bucket:
+            if not isinstance(phrase, str) or len(phrase) < 2:
+                continue
+            first, last = phrase[0], phrase[-1]
+            s1 = best_seq.get(first)
+            s2 = best_seq.get(last)
+            if not s1 or not s2:
+                skipped += 1
+                continue
+            code = s1[0][:3] + s2[0][:3]
+            key = (code, phrase)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append([code, phrase, round(float(freq), 4)])
+
+    rows.sort(key=lambda x: (x[0], -x[2], x[1]))
+    out = OUT_DIR / "phrases_by_code.json"
+    out.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    print(
+        f"{len(rows)} phrase codes -> {out} ({out.stat().st_size:,} bytes)"
+        + (f" (skipped {skipped} missing strokes)" if skipped else "")
+    )
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     export_strokes()
@@ -178,6 +249,7 @@ def main() -> None:
         print(f"Wrote fallback phrases.json ({sum(len(v) for v in phrases.values())} phrases)")
 
     export_ngrams()
+    export_phrases_by_code()
     export_ranking_config()
 
 

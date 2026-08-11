@@ -55,3 +55,32 @@ def test_export_strokes_writes_wubi_for_gt5_only(tmp_path: Path, monkeypatch: py
     assert any(r[1] == "一" for r in strokes)
     assert not any(r[1] == "一" for r in wubi), "≤5 strokes must not appear in wubi index"
     assert any(r[0] == "31555" and r[1] == "毓" for r in wubi)
+    # ≤5-stroke chars must not appear; long char retained
+    assert all(len(r[0]) >= 1 for r in wubi)
+
+
+def test_export_caps_variants_per_character(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.export_for_chrome as export_mod
+
+    rows = [
+        CharacterRecord(character="髒", stroke_sequence=[1] * (6 + i), frequency=0.5 - i * 0.01)
+        for i in range(20)
+    ]
+    db = tmp_path / "stroke_db.msgpack"
+    save_msgpack(rows, db)
+    out = tmp_path / "chrome-out"
+    out.mkdir()
+    monkeypatch.setattr(export_mod, "OUT_DIR", out)
+    monkeypatch.setattr(export_mod, "MAX_VARIANTS_PER_CHAR", 5)
+
+    real_load = export_mod.load_msgpack
+
+    def _load(path: Path):
+        if path.name == "stroke_db.msgpack":
+            return real_load(db)
+        return real_load(path)
+
+    monkeypatch.setattr(export_mod, "load_msgpack", _load)
+    export_mod.export_strokes()
+    strokes = json.loads((out / "strokes.json").read_text(encoding="utf-8"))
+    assert len([r for r in strokes if r[1] == "髒"]) == 5

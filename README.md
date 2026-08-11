@@ -12,6 +12,7 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Real-time prefix matching with binary search on a sorted stroke index
 - Fuzzy one-stroke correction when exact matches are scarce (< 3)
 - Optional 五筆劃 (頭四尾一) short codes for characters with more than 5 strokes
+- G6-style phrase codes (頭字頭三畫 + 尾字頭三畫), e.g. 香港 ← 丿一丨丶丶一 (marked 詞)
 - Mid-typing association characters from bigrams (marked 聯)
 - Composite ranking: static frequency, user adaptation, bigram/trigram context, recency, position
 - Cantonese frequency boosts — common Cantonese characters (係、唔、咗、嘅、冇…) rank higher
@@ -20,7 +21,7 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Compatible with multiple stroke order standards (macOS, Nokia, Conway)
 - User frequency adaptation persisted via `chrome.storage`
 - Shift to toggle Chinese/English mode; configurable toggle key (default backtick `` ` ``) to toggle on/off
-- Options page: toggle key, password fields, 五筆劃, associations, numpad strokes, Chinese punctuation
+- Options page: toggle key, password fields, 五筆劃, G6 phrase codes, associations, numpad strokes, Chinese punctuation
 - Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
 - Works with `<input>`, `<textarea>`, and `contenteditable` elements (password fields off by default)
 - Overlay follows the caret / text field (drag once to pin a manual position)
@@ -146,32 +147,40 @@ chrome-extension/           # Chrome extension (Manifest V3)
 ├── background.js           # Service worker for global state sync
 ├── engine.js               # Pure search/ranking/phrase helpers (Node-testable)
 ├── content.js              # Input handling, UI, chrome.* wiring
+├── options.html / options.js
 ├── style.css               # Overlay styling
+├── STORE_LISTING.md        # Chrome Web Store copy
 ├── test/                   # Node built-in test runner (node --test)
 └── data/                   # Exported JSON data files
     ├── strokes.json        # Sorted [sequence, char, freq, scriptTag?]
+    ├── strokes_wubi.json   # 五筆劃 short codes (頭四尾一), optional mode
     ├── phrases.json        # Phrase dict indexed by first char
+    ├── phrases_by_code.json # G6 phrase codes [code, phrase, freq]
     ├── bigrams.json        # Bigram model {char1: {char2: score}}
     ├── trigrams.json       # Trigram model {p2: {p1: {char: score}}}
     ├── ranking_config.json # Shared ranking weights (Python↔JS)
     └── cantonese_freq.json # Cantonese frequency overrides
 
 src/stroke_input/           # Python engine library
-├── config/                 # Configuration and constants
-├── data/                   # Data models, phrase loader, serializer, n-gram
-├── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
-├── gui/                    # Desktop GUI components (PySide6)
-└── output/                 # Character output (keyboard simulation / clipboard)
+├── config/                 # Shared ranking / Zipf / n-gram constants
+├── data/                   # Models, phrase loader, serializer, n-grams, user freq
+└── engine/                 # StrokeEngine (trie), InferenceEngine (fuzzy), FrequencyRanker
 
 scripts/                    # Data generation and build tools
 ├── download_stroke_data.py # Download and parse Conway stroke data
 ├── generate_phrase_dict.py # Generate phrase dictionary from CC-CEDICT
 ├── generate_cantonese_data.py # Generate Cantonese freq, phrases, bigrams
-├── export_for_chrome.py    # Export stroke DB as sorted JSON for extension
+├── export_for_chrome.py    # Export stroke DB + n-grams + ranking_config for extension
 ├── package_extension.py    # Package extension zip for Web Store
-└── generate_icons.py       # Generate extension icons
+├── generate_parity_fixture.py # Python↔JS ranking parity fixture
+├── generate_icons.py       # Generate extension icons
+├── generate_screenshots.py # Promotional Web Store screenshots (Pillow)
+└── check_keys.py           # Dev helper: print keyboard library key names
 ```
 
+### Known limitations
+
+- Cross-origin iframes, closed Shadow DOM, and canvas-based editors (e.g. Google Docs) are not supported; the overlay only targets normal editable fields in the page.
 ## License
 
 - Stroke data: [Conway Stroke Data](https://github.com/stroke-input/stroke-input-data) (CC-BY-4.0)

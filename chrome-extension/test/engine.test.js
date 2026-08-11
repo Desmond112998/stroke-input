@@ -64,7 +64,9 @@ describe("StrokeInputEngine.computeScore", () => {
         userPositions: { "1": { 一: [0, 0] } },
       });
       const w = Engine.DEFAULT_WEIGHTS;
-      assert.ok(Math.abs(score - (w.recency * 1.0 + w.position * 1.0)) < 1e-9);
+      assert.ok(
+        Math.abs(score - (w.recency * 1.0 + w.position * 1.0)) < 1e-9
+      );
     });
   });
 
@@ -193,5 +195,128 @@ describe("StrokeInputEngine.match quality", () => {
     const exact = Object.assign(["1", "一", 0.5], { isExact: true });
     const fuzzy = Object.assign(["1", "一", 0.5], { isExact: false });
     assert.ok(Engine.computeScore(exact, {}) > Engine.computeScore(fuzzy, {}));
+  });
+});
+
+describe("StrokeInputEngine.frequency-first prefix ranking", () => {
+  it("keeps a common short exact character first without length scoring", () => {
+    const records = [
+      ["1", "一", 0.995],
+      ["1325", "冇", 0.97],
+      ["111125134154544", "諗", 0.88, "t"],
+      ["1251112", "車", 0.88, "t"],
+    ];
+    const out = Engine.searchPrefix([1], records, {});
+    assert.equal(out[0][1], "一");
+    assert.ok(out.findIndex((r) => r[1] === "冇") < out.findIndex((r) => r[1] === "諗"));
+  });
+
+  it("applies only a small traditional boost (tie-breaker)", () => {
+    assert.ok(Engine.TRADITIONAL_BOOST <= 0.015);
+  });
+
+  it("ranks a ranked character above unranked shorter glyphs", () => {
+    const records = [
+      ["5415412512", "翀", 0],
+      ["541541251153", "䎈", 0],
+      ["5415412512134", "䎌", 0],
+      ["541541251112134", "翨", 0],
+      ["54154125121122134", "翼", 0.01],
+    ];
+    const out = Engine.searchPrefix([5, 4, 1, 5, 4, 1, 2, 5, 1], records, {});
+    assert.equal(out[0][1], "翼");
+  });
+});
+
+describe("StrokeInputEngine.searchPhrasesByCode", () => {
+  const records = [
+    ["312441", "香港", 0.9],
+    ["312441", "香江", 0.3],
+    ["441312", "港香", 0.1],
+    ["111222", "一二", 0.5],
+  ];
+
+  it("finds 香港 under G6 code 312441", () => {
+    const out = Engine.searchPhrasesByCode([3, 1, 2, 4, 4, 1], records, {});
+    assert.ok(out.some((r) => r[1] === "香港" && r[4] === "phrase"));
+  });
+
+  it("supports progressive prefix match", () => {
+    const out = Engine.searchPhrasesByCode([3, 1, 2], records, { minLen: 2 });
+    assert.ok(out.some((r) => r[1] === "香港"));
+    assert.ok(!out.some((r) => r[1] === "一二"));
+  });
+
+  it("returns empty below minLen", () => {
+    assert.deepEqual(
+      Engine.searchPhrasesByCode([3], records, { minLen: 2 }),
+      []
+    );
+  });
+});
+
+describe("StrokeInputEngine.searchPrefix cap", () => {
+  it("limits results to SEARCH_RESULT_CAP", () => {
+    const records = [];
+    for (let i = 0; i < 250; i++) {
+      records.push(["1" + String(i).padStart(3, "0"), "字", 0.5 - i * 0.001]);
+    }
+    // Use distinct chars so dedup keeps all
+    for (let i = 0; i < 250; i++) {
+      records[i][1] = String.fromCodePoint(0x4e00 + i);
+    }
+    records.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const out = Engine.searchPrefix([1], records, {});
+    assert.ok(out.length <= Engine.SEARCH_RESULT_CAP);
+    assert.equal(out.length, Engine.SEARCH_RESULT_CAP);
+  });
+});
+
+describe("StrokeInputEngine.learnedPhrasesFor", () => {
+  it("returns phrases starting with seed ordered by hit count", () => {
+    const positions = {
+      __phrases__: {
+        香港: [1, 1, 1],
+        香蕉: [1],
+        澳門: [1, 1],
+      },
+    };
+    const out = Engine.learnedPhrasesFor("香", positions, 5);
+    assert.deepEqual(
+      out.map((p) => p.phrase),
+      ["香港", "香蕉"]
+    );
+  });
+});
+
+describe("StrokeInputEngine.maybeAutoPin", () => {
+  it("pins after threshold consecutive rank-0 selections", () => {
+    const positions = { jk: { 你: [0, 0, 0] } };
+    const pins = {};
+    assert.equal(Engine.maybeAutoPin("jk", "你", positions, pins, 3), true);
+    assert.equal(pins.jk["你"], true);
+  });
+
+  it("does not pin when ranks are mixed", () => {
+    const positions = { jk: { 你: [0, 1, 0] } };
+    const pins = {};
+    assert.equal(Engine.maybeAutoPin("jk", "你", positions, pins, 3), false);
+    assert.deepEqual(pins, {});
+  });
+});
+
+describe("StrokeInputEngine.pins affect position score", () => {
+  it("pinned char gets full position weight", () => {
+    const unpinned = Engine.computeScore(["12", "你", 0], {
+      strokeSeq: [1, 2],
+    });
+    const pinned = Engine.computeScore(["12", "你", 0], {
+      strokeSeq: [1, 2],
+      userPins: { "12": { 你: true } },
+    });
+    assert.ok(
+      Math.abs(pinned - Engine.DEFAULT_WEIGHTS.position * 1.0) < 1e-9
+    );
+    assert.ok(pinned > unpinned);
   });
 });
