@@ -40,19 +40,21 @@ The Python package in `src\stroke_input\` is the source of truth for engine beha
 The repository has both source and generated data. Treat generated files carefully.
 
 1. `scripts\download_stroke_data.py` obtains/parses Conway stroke data into `data\stroke_db.msgpack`.
-2. `scripts\generate_phrase_dict.py` builds Traditional Chinese phrase data from CC-CEDICT-derived sources.
-3. `scripts\generate_cantonese_data.py` creates Cantonese frequency, phrase, and bigram seed data.
-4. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\` (full strokes, optional 五筆劃 index, unified n-grams, ranking config). Per-character stroke variants are capped on export.
-5. `scripts\package_extension.py` rebuilds/validates/packages the extension zip.
-6. `scripts\generate_parity_fixture.py` refreshes the Python↔JS ranking parity fixture used by tests.
-7. Optional assets: `scripts\generate_icons.py`, `scripts\generate_screenshots.py` (Web Store images). `scripts\check_keys.py` is a local keyboard-name debug helper (requires the `keyboard` package; not part of the extension runtime).
+2. `scripts\build_hk_frequency.py` downloads and merges Hong Kong / Traditional Chinese character frequency data from Apple Daily, Cifu, and CUHK Lexis into `data\character_frequency_hk.json`.
+3. `scripts\generate_phrase_dict.py` builds Traditional Chinese phrase data from CC-CEDICT-derived sources.
+4. `scripts\generate_cantonese_data.py` creates Cantonese frequency overrides, phrase data, and bigram seed data.
+5. `scripts\export_for_chrome.py` exports optimized JSON into `chrome-extension\data\` (full strokes, optional 五筆劃 index, unified n-grams, ranking config). Per-character stroke variants are capped on export.
+6. `scripts\package_extension.py` rebuilds/validates/packages the extension zip.
+7. `scripts\generate_parity_fixture.py` refreshes the Python↔JS ranking parity fixture used by tests.
+8. Optional assets: `scripts\generate_icons.py`, `scripts\generate_screenshots.py` (Web Store images). `scripts\check_keys.py` is a local keyboard-name debug helper (requires the `keyboard` package; not part of the extension runtime).
 
 ## Ranking and inference intent
 
 Candidate ordering blends several concerns:
 
 - exact/prefix stroke match quality (fuzzy one-stroke substitution ranks after exact)
-- static frequency (Zipf-mapped ranks + Cantonese overrides)
+- static frequency (merged Hong Kong frequency table + Zipf-mapped fallback + Cantonese overrides)
+- short-prefix exact-complete bucketing: for prefixes of 5 strokes or fewer, characters whose full stroke sequence is exactly the typed prefix are shown before longer continuations, so common short characters like 中 (2512) and 由 (25121) surface first
 - Traditional Chinese preference (Conway `^` / `"t"` script tag)
 - user frequency adaptation, recency, and position / pin history
 - previous-character bigram and trigram context
@@ -81,5 +83,9 @@ The project uses external language data:
 
 - Conway stroke data: CC-BY-4.0
 - CC-CEDICT-derived phrase dictionary: CC BY-SA 4.0
+- Hong Kong character frequency data (merged from):
+  - Apple Daily frequency list (chaaklau/appledaily-frequency): CC BY 4.0
+  - Cifu (gwinterstein/Cifu): academic lexicon; cite Lai & Winterstein (2020) if used in research
+  - CUHK Lexis Chinese Character Frequency Statistics: humanum.arts.cuhk.edu.hk/Lexis/chifreq/
 
 Do not add undocumented third-party datasets or copied content.
