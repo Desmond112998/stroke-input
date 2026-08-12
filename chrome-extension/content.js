@@ -469,7 +469,7 @@
     // Auto-commit hint: show ↵ badge when only 1 candidate
     const isUnique = candidates.length === 1 && !phraseMode;
     strokesEl.innerHTML = chineseMode
-      ? (symbols ? `<span>${symbols}</span>${isUnique ? ' <span class="auto-commit-hint" title="唯一候選，按空格上屏">↵</span>' : ""}` : "")
+      ? (symbols ? `<span>${symbols}</span>${isUnique ? ' <span class="auto-commit-hint" title="唯一候選，按 Enter 或 1 上屏">↵</span>' : ""}` : "")
       : "";
 
     const statusEl = overlay.querySelector("#stroke-input-status");
@@ -906,30 +906,55 @@
       return;
     }
 
-    // ArrowDown: next page (keep first candidate highlighted)
-    if (e.key === "ArrowDown" && hasCandidates) {
+    // ArrowDown / Space / PageDown: next page (wrap to first page)
+    if (
+      (e.key === "ArrowDown" ||
+        e.key === "PageDown" ||
+        e.key === " " ||
+        e.key === "Spacebar" ||
+        e.code === "Space") &&
+      hasCandidates
+    ) {
       e.preventDefault();
       e.stopPropagation();
-      if (phraseMode) {
-        const total = Math.ceil(phraseList.length / PAGE_SIZE);
-        if (phrasePage < total - 1) { phrasePage++; highlightIdx = 0; }
-      } else {
-        const total = Math.ceil(candidates.length / PAGE_SIZE);
-        if (page < total - 1) { page++; highlightIdx = 0; }
+      const list = phraseMode ? phraseList : candidates;
+      const total = Math.ceil(list.length / PAGE_SIZE);
+      if (total <= 1) {
+        // Still consume Space while composing so it does not insert a blank.
+        highlightIdx = 0;
+        render();
+        return;
       }
+      if (phraseMode) {
+        phrasePage = (phrasePage + 1) % total;
+      } else {
+        page = (page + 1) % total;
+      }
+      highlightIdx = 0;
       render();
       return;
     }
 
-    // ArrowUp: previous page (keep first candidate highlighted)
-    if (e.key === "ArrowUp" && hasCandidates) {
+    // ArrowUp / PageUp: previous page (wrap to last page)
+    if (
+      (e.key === "ArrowUp" || e.key === "PageUp") &&
+      hasCandidates
+    ) {
       e.preventDefault();
       e.stopPropagation();
-      if (phraseMode) {
-        if (phrasePage > 0) { phrasePage--; highlightIdx = 0; }
-      } else {
-        if (page > 0) { page--; highlightIdx = 0; }
+      const list = phraseMode ? phraseList : candidates;
+      const total = Math.ceil(list.length / PAGE_SIZE);
+      if (total <= 1) {
+        highlightIdx = 0;
+        render();
+        return;
       }
+      if (phraseMode) {
+        phrasePage = (phrasePage - 1 + total) % total;
+      } else {
+        page = (page - 1 + total) % total;
+      }
+      highlightIdx = 0;
       render();
       return;
     }
@@ -943,39 +968,6 @@
       } else {
         selectCandidate(highlightIdx);
       }
-      return;
-    }
-
-    // Space / PageDown = next page of candidates (confirm with 1–9 or Enter)
-    if (e.key === " " || e.key === "PageDown") {
-      if (!hasComposition() && !hasCandidates) return;
-      if (!hasCandidates) return;
-      e.preventDefault();
-      e.stopPropagation();
-      highlightIdx = 0;
-      if (phraseMode) {
-        const total = Math.ceil(phraseList.length / PAGE_SIZE);
-        if (phrasePage < total - 1) phrasePage++;
-      } else {
-        const total = Math.ceil(candidates.length / PAGE_SIZE);
-        if (page < total - 1) page++;
-      }
-      render();
-      return;
-    }
-
-    // PageUp = previous page — only when composing
-    if (e.key === "PageUp") {
-      if (!hasComposition()) return;
-      e.preventDefault();
-      e.stopPropagation();
-      highlightIdx = 0;
-      if (phraseMode) {
-        if (phrasePage > 0) phrasePage--;
-      } else {
-        if (page > 0) page--;
-      }
-      render();
       return;
     }
   }
