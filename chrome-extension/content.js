@@ -475,7 +475,7 @@
     const statusEl = overlay.querySelector("#stroke-input-status");
     statusEl.innerHTML =
       `<span class="stroke-mode-badge ${chineseMode ? "cn" : "en"}">${modeLabel}</span> ` +
-      `<kbd>${escapeHtml(settings.toggleKey)}</kbd> 開關 · <kbd>Shift</kbd> 中英 · <kbd>◀▶</kbd> 選字 · <kbd>▲▼</kbd> 翻頁`;
+      `<kbd>${escapeHtml(settings.toggleKey)}</kbd> 開關 · <kbd>Shift</kbd> 中英 · <kbd>1–9</kbd>/<kbd>Enter</kbd> 選字 · <kbd>Space</kbd>/<kbd>▲▼</kbd> 翻頁`;
 
     if (phraseMode && phraseList.length > 0) {
       candidatesEl.innerHTML = "";
@@ -946,25 +946,10 @@
       return;
     }
 
-    // Space = commit highlighted (or unique) candidate; never just "page"
-    if (e.key === " ") {
-      if (candidates.length === 0 && phraseList.length === 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (candidates.length === 1 && !phraseMode) {
-        selectCandidate(0);
-        return;
-      }
-      const idx = highlightIdx >= 0 ? highlightIdx : 0;
-      if (phraseMode) selectPhrase(idx);
-      else selectCandidate(idx);
-      return;
-    }
-
-    // PageDown = next page
-    if (e.key === "PageDown") {
-      if (!hasComposition()) return;
+    // Space / PageDown = next page of candidates (confirm with 1–9 or Enter)
+    if (e.key === " " || e.key === "PageDown") {
+      if (!hasComposition() && !hasCandidates) return;
+      if (!hasCandidates) return;
       e.preventDefault();
       e.stopPropagation();
       highlightIdx = 0;

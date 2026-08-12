@@ -23,6 +23,7 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Shift to toggle Chinese/English mode; configurable toggle key (default backtick `` ` ``) to toggle on/off
 - Options page: toggle key, password fields, 五筆劃, associations, numpad strokes, Chinese punctuation
 - Arrow key navigation (◀▶ to highlight candidates, ▲▼ to page)
+- Space / Page Down to browse the next page of candidates; Enter or 1–9 to confirm
 - Works with `<input>`, `<textarea>`, and `contenteditable` elements (password fields off by default)
 - Overlay follows the caret / text field (drag once to pin a manual position)
 - Global state sync across all tabs via background service worker
@@ -50,10 +51,8 @@ The primary interface is a Chrome extension that works in any text field on any 
 | `,` `.` `?` `!` `;` `:` | Full-width Chinese punctuation when buffer is empty (option; default on) |
 | 1–9 | Select candidate or phrase |
 | ◀ / ▶ | Highlight prev/next candidate |
-| ▲ / ▼ | Previous / next page |
-| Space | Confirm highlighted candidate (or the only candidate) |
-| Page Down | Next page |
-| Page Up | Previous page (only while composing) |
+| Space / ▼ / Page Down | Next page of candidates |
+| ▲ / Page Up | Previous page (only while composing) |
 | Enter | Confirm highlighted candidate |
 | Backspace | Remove last stroke (or dismiss phrases) |
 | Escape | Clear composition (only while composing; page Escape otherwise) |
