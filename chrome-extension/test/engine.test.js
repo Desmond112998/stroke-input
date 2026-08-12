@@ -228,30 +228,49 @@ describe("StrokeInputEngine.frequency-first prefix ranking", () => {
   });
 });
 
-describe("StrokeInputEngine.searchPhrasesByCode", () => {
-  const records = [
-    ["312441", "香港", 0.9],
-    ["312441", "香江", 0.3],
-    ["441312", "港香", 0.1],
-    ["111222", "一二", 0.5],
-  ];
+describe("StrokeInputEngine.followupPhraseSuggestions", () => {
+  const phrases = {
+    香: [["香港", 0.96], ["香蕉", 0.4]],
+    港: [["港人", 0.8], ["港幣", 0.6]],
+    人: [["人民", 0.9]],
+  };
 
-  it("finds 香港 under G6 code 312441", () => {
-    const out = Engine.searchPhrasesByCode([3, 1, 2, 4, 4, 1], records, {});
-    assert.ok(out.some((r) => r[1] === "香港" && r[4] === "phrase"));
-  });
-
-  it("supports progressive prefix match", () => {
-    const out = Engine.searchPhrasesByCode([3, 1, 2], records, { minLen: 2 });
-    assert.ok(out.some((r) => r[1] === "香港"));
-    assert.ok(!out.some((r) => r[1] === "一二"));
-  });
-
-  it("returns empty below minLen", () => {
+  it("only returns phrases after an explicit seed character", () => {
     assert.deepEqual(
-      Engine.searchPhrasesByCode([3], records, { minLen: 2 }),
+      Engine.followupPhraseSuggestions("", phrases, {}, {}, {}, { limit: 9 }),
       []
     );
+  });
+
+  it("returns phrases beginning with the committed character", () => {
+    const out = Engine.followupPhraseSuggestions("香", phrases, {}, {}, {}, { limit: 9 });
+    assert.deepEqual(out.map((p) => p.phrase), ["香港", "香蕉"]);
+    assert.ok(out.every((p) => p.phrase.startsWith("香")));
+  });
+
+  it("can provide another row after a selected recommendation", () => {
+    const after香 = Engine.followupPhraseSuggestions("香", phrases, {}, {}, {}, { limit: 9 });
+    assert.equal(after香[0].phrase, "香港");
+
+    // After committing 香港, the UI uses the new tail character 港 as seed.
+    const after香港 = Engine.followupPhraseSuggestions("港", phrases, {}, {}, {}, { limit: 9 });
+    assert.deepEqual(after香港.map((p) => p.phrase), ["港人", "港幣"]);
+
+    const after港人 = Engine.followupPhraseSuggestions("人", phrases, {}, {}, {}, { limit: 9 });
+    assert.deepEqual(after港人.map((p) => p.phrase), ["人民"]);
+  });
+
+  it("deduplicates static, learned, and predicted phrases", () => {
+    const out = Engine.followupPhraseSuggestions(
+      "香",
+      { 香: [["香港", 0.96]] },
+      { __phrases__: { 香港: [1, 1], 香江: [1] } },
+      { 香: { 港: 1.0, 江: 0.5 } },
+      {},
+      { limit: 9 }
+    );
+    assert.equal(out.filter((p) => p.phrase === "香港").length, 1);
+    assert.ok(out.some((p) => p.phrase === "香江"));
   });
 });
 

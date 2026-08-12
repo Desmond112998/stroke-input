@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "筆畫輸入法 Stroke Input",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Chinese stroke input method (筆畫輸入法) for the browser",
   "permissions": ["storage"],
   "background": {
@@ -25,7 +25,6 @@
         "data/strokes.json",
         "data/strokes_wubi.json",
         "data/phrases.json",
-        "data/phrases_by_code.json",
         "data/bigrams.json",
         "data/trigrams.json",
         "data/ranking_config.json"

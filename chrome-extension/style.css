@@ -209,14 +209,6 @@
   line-height: 1;
 }
 
-.phrase-badge {
-  font-size: 9px;
-  color: rgba(160, 190, 255, 0.95);
-  margin-right: 2px;
-  vertical-align: super;
-  line-height: 1;
-}
-
 .fuzzy-badge {
   font-size: 9px;
   color: rgba(180, 180, 200, 0.85);

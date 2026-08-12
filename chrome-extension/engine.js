@@ -368,41 +368,6 @@
   }
 
   /**
-   * G6-style phrase-by-code lookup (T2.4).
-   * Records: sorted [code, phrase, freq]. Prefix match via binary search.
-   * Returns tagged copies with record[4] === "phrase".
-   */
-  function searchPhrasesByCode(prefix, phraseRecords, opts) {
-    opts = opts || {};
-    const minLen = opts.minLen !== undefined ? opts.minLen : 2;
-    const cap = opts.cap !== undefined ? opts.cap : 40;
-    if (!prefix || prefix.length < minLen) return [];
-    if (!phraseRecords || !phraseRecords.length) return [];
-    if (prefix.includes(6)) return []; // wildcard not applied to phrase codes (MVP)
-
-    const pfx = prefix.join("");
-    let lo = 0;
-    let hi = phraseRecords.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (phraseRecords[mid][0] < pfx) lo = mid + 1;
-      else hi = mid;
-    }
-    const hits = [];
-    for (let i = lo; i < phraseRecords.length; i++) {
-      const seq = phraseRecords[i][0];
-      if (!seq.startsWith(pfx)) break;
-      const tagged = phraseRecords[i].slice();
-      while (tagged.length < 5) tagged.push(null);
-      tagged[4] = "phrase";
-      hits.push(tagged);
-    }
-    hits.sort((a, b) => b[2] - a[2] || (a[1] < b[1] ? -1 : 1));
-    if (hits.length > cap) hits.length = cap;
-    return hits;
-  }
-
-  /**
    * Top association characters from bigrams for mid-typing injection.
    */
   function associationChars(prevChar, bigrams, limit) {
@@ -511,6 +476,49 @@
   }
 
   /**
+   * Phrase suggestions shown only after committing a character or prior
+   * recommendation. The resulting phrases all begin with `seed`, so a phrase
+   * selection can insert only its suffix and recursively request the next row.
+   */
+  function followupPhraseSuggestions(
+    seed,
+    phraseBuckets,
+    userPositions,
+    bigrams,
+    trigrams,
+    opts
+  ) {
+    opts = opts || {};
+    const limit = opts.limit !== undefined ? opts.limit : 9;
+    if (!seed) return [];
+
+    const staticPhrases =
+      phraseBuckets && Array.isArray(phraseBuckets[seed])
+        ? phraseBuckets[seed]
+            .filter((p) => Array.isArray(p) && typeof p[0] === "string" && p[0].startsWith(seed))
+            .map((p) => ({ phrase: p[0], score: Number(p[1]) || 0, source: "static" }))
+        : [];
+    const learned = learnedPhrasesFor(seed, userPositions, limit);
+    const predicted = predictPhrase(seed, bigrams, trigrams, { maxResults: limit })
+      .filter((p) => p.phrase.length > seed.length && p.phrase.startsWith(seed))
+      .map((p) => ({ phrase: p.phrase, score: p.score, source: "predicted" }));
+
+    const unique = [];
+    const seen = new Set();
+    // Stable source priority keeps curated/static phrase rankings predictable;
+    // learned and n-gram predictions fill any gaps.
+    for (const group of [staticPhrases, learned, predicted]) {
+      for (const item of group) {
+        if (seen.has(item.phrase)) continue;
+        seen.add(item.phrase);
+        unique.push(item);
+        if (unique.length >= limit) return unique;
+      }
+    }
+    return unique;
+  }
+
+  /**
    * Auto-pin when the last `threshold` recorded ranks for (seq, char) are all 0.
    * Mutates `pins` map: { seqKey: { char: true } }.
    */
@@ -558,9 +566,9 @@
     searchPrefix,
     searchWithFuzzy,
     searchMerged,
-    searchPhrasesByCode,
     associationChars,
     learnedPhrasesFor,
+    followupPhraseSuggestions,
     maybeAutoPin,
     predictPhrase,
     EXACT_THRESHOLD,

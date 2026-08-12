@@ -32,7 +32,6 @@
     showAssociations: true,
     numpadStrokes: false,
     chinesePunctuation: true,
-    g6PhraseCodes: true,
   });
   let settings = {
     toggleKey: DEFAULT_SETTINGS.toggleKey,
@@ -41,7 +40,6 @@
     showAssociations: DEFAULT_SETTINGS.showAssociations,
     numpadStrokes: DEFAULT_SETTINGS.numpadStrokes,
     chinesePunctuation: DEFAULT_SETTINGS.chinesePunctuation,
-    g6PhraseCodes: DEFAULT_SETTINGS.g6PhraseCodes,
   };
 
   // Pure helpers live in engine.js (loaded before this script).
@@ -59,7 +57,6 @@
   let strokeSeq = [];
   let allRecords = []; // sorted [seq, char, freq]
   let wubiRecords = []; // 頭四尾一 index (optional)
-  let phrasesByCode = []; // G6 [code, phrase, freq] sorted by code
   let phrases = {};    // first_char -> [[phrase, freq], ...]
   let associationSet = new Set(); // chars injected as mid-typing associations
   let bigrams = {};    // char -> {char2: score, ...}
@@ -218,7 +215,6 @@
         trigramResp,
         rankingResp,
         wubiResp,
-        phraseCodeResp,
       ] = await Promise.all([
         fetch(chrome.runtime.getURL("data/strokes.json")),
         fetch(chrome.runtime.getURL("data/phrases.json")),
@@ -226,14 +222,12 @@
         fetch(chrome.runtime.getURL("data/trigrams.json")).catch(() => null),
         fetch(chrome.runtime.getURL("data/ranking_config.json")).catch(() => null),
         fetch(chrome.runtime.getURL("data/strokes_wubi.json")).catch(() => null),
-        fetch(chrome.runtime.getURL("data/phrases_by_code.json")).catch(() => null),
       ]);
       allRecords = await strokeResp.json();
       phrases = await phraseResp.json();
       bigrams = await bigramResp.json();
       trigrams = trigramResp ? await trigramResp.json() : {};
       wubiRecords = wubiResp ? await wubiResp.json() : [];
-      phrasesByCode = phraseCodeResp ? await phraseCodeResp.json() : [];
       if (rankingResp && Engine) {
         try {
           Engine.setConfig(await rankingResp.json());
@@ -244,7 +238,6 @@
       console.log(
         `[筆畫] Loaded ${allRecords.length} characters, ` +
         `${wubiRecords.length} wubi entries, ` +
-        `${phrasesByCode.length} phrase codes, ` +
         `${Object.keys(phrases).length} phrase buckets`
       );
     } catch (e) {
@@ -306,28 +299,6 @@
       }
     }
 
-    // G6 phrase-by-code (頭字頭三 + 尾字頭三): merge with character candidates
-    if (
-      settings.g6PhraseCodes &&
-      Engine.searchPhrasesByCode &&
-      phrasesByCode.length &&
-      prefix.length >= 2
-    ) {
-      const phraseHits = Engine.searchPhrasesByCode(prefix, phrasesByCode, {
-        minLen: 2,
-        cap: 30,
-      });
-      if (phraseHits.length) {
-        if (prefix.length >= 6) {
-          // Full six-code: phrase hits lead so「香港」is easy to pick
-          results = phraseHits.concat(results);
-        } else {
-          const head = results.slice(0, 1);
-          const rest = results.slice(1);
-          results = head.concat(phraseHits, rest);
-        }
-      }
-    }
     return results;
   }
 
@@ -525,9 +496,6 @@
           if (isTrigramDriven(r)) {
             badges.push('<span class="tri-badge" title="觸發：上文脈絡">★</span>');
           }
-          if (r[4] === "phrase") {
-            badges.push('<span class="phrase-badge" title="詞組碼">詞</span>');
-          }
           if (r[4] === "assoc" || associationSet.has(r[1])) {
             badges.push('<span class="assoc-badge" title="關聯字">聯</span>');
           }
@@ -619,63 +587,41 @@
   }
 
   // ── Selection Handlers ─────────────────────────────────────────
+  function showFollowupPhraseSuggestions(seed) {
+    const suggestions = Engine.followupPhraseSuggestions(
+      seed,
+      phrases,
+      userPositions,
+      bigrams,
+      trigrams,
+      { limit: 9 }
+    );
+    phraseMode = suggestions.length > 0;
+    phraseList = suggestions.map((p) => [p.phrase, p.score]);
+    phrasePage = 0;
+    if (phraseMode) highlightIdx = 0;
+  }
+
   function selectCandidate(idx) {
     const start = page * PAGE_SIZE;
     const globalIdx = start + idx;
     const item = candidates[globalIdx];
     if (!item) return;
 
-    const text = item[1];
-    const isPhraseCand = item[4] === "phrase" || (typeof text === "string" && text.length > 1);
-    insertText(text);
-
-    if (isPhraseCand) {
-      prevSelectedChar =
-        text.length >= 2 ? text[text.length - 2] : lastSelectedChar;
-      lastSelectedChar = text[text.length - 1];
-      for (const ch of text) bumpUserFreq(ch, globalIdx);
-      consecutiveChars = consecutiveChars.concat(Array.from(text));
-      autoLearnPhrase();
-    } else {
-      prevSelectedChar = lastSelectedChar;
-      lastSelectedChar = text;
-      bumpUserFreq(text, globalIdx);
-      consecutiveChars.push(text);
-      autoLearnPhrase();
-    }
+    // Character candidates are intentionally single-character only. Phrase
+    // choices live in the follow-up row after a character is committed.
+    const char = item[1];
+    insertText(char);
+    prevSelectedChar = lastSelectedChar;
+    lastSelectedChar = char;
+    bumpUserFreq(char, globalIdx);
+    consecutiveChars.push(char);
+    autoLearnPhrase();
 
     strokeSeq = [];
     candidates = [];
     page = 0;
-
-    // Follow-up suggestions from the last committed character
-    const seed = lastSelectedChar;
-    const staticPhrases = (phrases[seed] && phrases[seed].length > 0)
-      ? phrases[seed].map(p => ({ phrase: p[0], score: p[1], isStatic: true }))
-      : [];
-    const learned = Engine.learnedPhrasesFor
-      ? Engine.learnedPhrasesFor(seed, userPositions, 9)
-      : [];
-    const beamPhrases = predictPhrase(seed)
-      .filter(p => p.phrase.length > 1)
-      .map(p => ({ ...p, isStatic: false }));
-
-    const seen = new Set();
-    const merged = [];
-    for (const group of [staticPhrases, learned, beamPhrases]) {
-      for (const p of group) {
-        if (seen.has(p.phrase)) continue;
-        seen.add(p.phrase);
-        merged.push(p);
-      }
-    }
-
-    if (merged.length > 0) {
-      phraseMode = true;
-      phraseList = merged.map(p => [p.phrase, p.score]);
-      phrasePage = 0;
-      highlightIdx = 0;
-    }
+    showFollowupPhraseSuggestions(lastSelectedChar);
     render();
   }
 
@@ -684,25 +630,28 @@
     const item = phraseList[start + idx];
     if (!item) return;
 
-    const remaining = item[0].slice(1);
+    const fullPhrase = item[0];
+    // Suggestions normally start with the committed seed. Be defensive about
+    // externally learned data that does not.
+    const remaining = fullPhrase.startsWith(lastSelectedChar)
+      ? fullPhrase.slice(1)
+      : fullPhrase;
     if (remaining) {
       insertText(remaining);
-      // Track frequency for each character in the phrase
       for (const ch of remaining) {
         bumpUserFreq(ch);
       }
-      // Auto-learn the full phrase
-      const fullPhrase = item[0];
-      for (const ch of fullPhrase) consecutiveChars.push(ch);
+      // Only append newly inserted chars: the seed was already recorded.
+      consecutiveChars.push(...Array.from(remaining));
       autoLearnPhrase();
-      // Advance context: last two chars of the completed phrase
-      prevSelectedChar = fullPhrase.length >= 2 ? fullPhrase[fullPhrase.length - 2] : lastSelectedChar;
+      prevSelectedChar =
+        fullPhrase.length >= 2 ? fullPhrase[fullPhrase.length - 2] : lastSelectedChar;
       lastSelectedChar = fullPhrase[fullPhrase.length - 1];
     }
 
-    phraseMode = false;
-    phraseList = [];
-    phrasePage = 0;
+    // Recursive suggestions: selecting a recommendation continues from its
+    // new tail character, for any number of selections.
+    showFollowupPhraseSuggestions(lastSelectedChar);
     render();
   }
 
@@ -744,9 +693,6 @@
     }
     if (typeof raw.chinesePunctuation === "boolean") {
       settings.chinesePunctuation = raw.chinesePunctuation;
-    }
-    if (typeof raw.g6PhraseCodes === "boolean") {
-      settings.g6PhraseCodes = raw.g6PhraseCodes;
     }
   }
 
