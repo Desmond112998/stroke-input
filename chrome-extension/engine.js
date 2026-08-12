@@ -266,6 +266,31 @@
     return scored.map((x) => x.r);
   }
 
+  /**
+   * For short prefixes, bucket results so exact-complete encodings are shown
+   * before longer continuations. This matches the macOS-style behaviour where
+   * typing a few strokes surfaces the characters whose full code is exactly
+   * that prefix (e.g. 2512 -> 中) before multi-stroke phrases/common words.
+   *
+   * We do NOT add a continuous "remaining stroke length" score; that previously
+   * caused zero-frequency short glyphs to outrank common characters. Instead,
+   * exact-complete records are simply grouped ahead of continuations for short
+   * prefixes, and within each group normal ranking applies.
+   */
+  function bucketExactCompleteFirst(results, prefixLen, scoreCtx, cap) {
+    const exact = [];
+    const rest = [];
+    for (const r of results) {
+      if (r[0] && r[0].length === prefixLen) exact.push(r);
+      else rest.push(r);
+    }
+    const ordered =
+      prefixLen <= 5
+        ? rankAndCap(exact, scoreCtx, cap).concat(rankAndCap(rest, scoreCtx, cap))
+        : rankAndCap(exact.concat(rest), scoreCtx, cap);
+    return ordered;
+  }
+
   function searchPrefix(prefix, allRecords, ctx) {
     if (!prefix || !prefix.length) return [];
     allRecords = allRecords || [];
@@ -303,7 +328,7 @@
       ctx && ctx.searchResultCap !== undefined
         ? ctx.searchResultCap
         : SEARCH_RESULT_CAP;
-    return rankAndCap(unique, scoreCtx, cap);
+    return bucketExactCompleteFirst(unique, prefix.length, scoreCtx, cap);
   }
 
   const EXACT_THRESHOLD = 3;

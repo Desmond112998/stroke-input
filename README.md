@@ -13,8 +13,9 @@ The primary interface is a Chrome extension that works in any text field on any 
 - Fuzzy one-stroke correction when exact matches are scarce (< 3)
 - Optional 五筆劃 (頭四尾一) short codes for characters with more than 5 strokes
 - Mid-typing association characters from bigrams (marked 聯)
-- Composite ranking: static frequency, user adaptation, bigram/trigram context, recency, position
+- Composite ranking: merged Hong Kong frequency data, user adaptation, bigram/trigram context, recency, position
 - Cantonese frequency boosts — common Cantonese characters (係、唔、咗、嘅、冇…) rank higher
+- Short-prefix exact-complete bucketing: e.g. 2512 → 中, 25121 → 由, 1 → 一
 - Bigram model for contextual prediction (P(char₂ | char₁) from phrase co-occurrence)
 - Recursive phrase suggestions after character selection; selecting a suggestion continues from its tail character
 - Compatible with multiple stroke order standards (macOS, Nokia, Conway)
@@ -109,6 +110,17 @@ A Traditional Chinese phrase dictionary (`data/phrases.tsv`) sourced from CC-CED
 python scripts/generate_phrase_dict.py
 ```
 
+#### Frequency Data
+
+A merged Hong Kong / Traditional Chinese character frequency table is built from Apple Daily, Cifu, and CUHK Lexis sources and used as the primary static frequency signal:
+
+```bash
+python scripts/build_hk_frequency.py
+python scripts/download_stroke_data.py
+```
+
+Run `build_hk_frequency.py` before `download_stroke_data.py` so the stroke database uses the merged frequencies instead of the fallback Zipf-mapped ranking table.
+
 #### Cantonese Data
 
 Generates Cantonese frequency overrides, phrase dictionary (with Cantonese collocations), and bigram model:
@@ -166,6 +178,7 @@ src/stroke_input/           # Python engine library
 
 scripts/                    # Data generation and build tools
 ├── download_stroke_data.py # Download and parse Conway stroke data
+├── build_hk_frequency.py   # Merge HK/Traditional Chinese frequency sources
 ├── generate_phrase_dict.py # Generate phrase dictionary from CC-CEDICT
 ├── generate_cantonese_data.py # Generate Cantonese freq, phrases, bigrams
 ├── export_for_chrome.py    # Export stroke DB + n-grams + ranking_config for extension
@@ -183,3 +196,7 @@ scripts/                    # Data generation and build tools
 
 - Stroke data: [Conway Stroke Data](https://github.com/stroke-input/stroke-input-data) (CC-BY-4.0)
 - Phrase dictionary: derived from [CC-CEDICT](https://cc-cedict.org/) (CC BY-SA 4.0)
+- Frequency data:
+  - Apple Daily frequency list: [chaaklau/appledaily-frequency](https://github.com/chaaklau/appledaily-frequency) (CC BY 4.0)
+  - Cifu: [gwinterstein/Cifu](https://github.com/gwinterstein/Cifu) (academic lexicon; cite Lai & Winterstein 2020)
+  - CUHK Lexis: [humanum.arts.cuhk.edu.hk/Lexis/chifreq/](https://humanum.arts.cuhk.edu.hk/Lexis/chifreq/)

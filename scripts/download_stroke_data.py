@@ -21,6 +21,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 RAW_FILE = DATA_DIR / "codepoint-character-sequence.txt"
 DB_FILE = DATA_DIR / "stroke_db.msgpack"
 RANKING_FILE = DATA_DIR / "ranking-traditional.txt"
+HK_FREQ_FILE = DATA_DIR / "character_frequency_hk.json"
 
 BASE_URL = "https://raw.githubusercontent.com/stroke-input/stroke-input-data/master"
 FILES_TO_DOWNLOAD = {
@@ -206,8 +207,14 @@ def main() -> None:
         download_file(name, url)
 
     print("\nStep 2: Parsing ranking data...")
-    rankings = parse_ranking(RANKING_FILE)
-    print(f"  Loaded {len(rankings):,} character rankings")
+    if HK_FREQ_FILE.exists():
+        import json
+        rankings = json.loads(HK_FREQ_FILE.read_text(encoding="utf-8"))
+        print(f"  Loaded {len(rankings):,} merged HK character frequencies from {HK_FREQ_FILE.name}")
+    else:
+        rankings = parse_ranking(RANKING_FILE)
+        print(f"  Loaded {len(rankings):,} character rankings from {RANKING_FILE.name}")
+        print(f"  (Run scripts/build_hk_frequency.py to build a richer HK frequency table)")
 
     print("\nStep 3: Building stroke database...")
     if DB_FILE.exists():

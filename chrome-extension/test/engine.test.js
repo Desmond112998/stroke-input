@@ -226,6 +226,18 @@ describe("StrokeInputEngine.frequency-first prefix ranking", () => {
     const out = Engine.searchPrefix([5, 4, 1, 5, 4, 1, 2, 5, 1], records, {});
     assert.equal(out[0][1], "翼");
   });
+
+  it("buckets exact-complete characters ahead of continuations for short prefixes", () => {
+    const records = [
+      ["2512", "中", 0.22],
+      ["25125111215452", "嘢", 0.94],
+      ["25121", "由", 0.09],
+    ].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const out4 = Engine.searchPrefix([2, 5, 1, 2], records, {});
+    assert.equal(out4[0][1], "中");
+    const out5 = Engine.searchPrefix([2, 5, 1, 2, 1], records, {});
+    assert.equal(out5[0][1], "由");
+  });
 });
 
 describe("StrokeInputEngine.followupPhraseSuggestions", () => {

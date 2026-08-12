@@ -60,10 +60,23 @@ def rebuild_data() -> None:
     sys.path.insert(0, str(ROOT / "src"))
     sys.path.insert(0, str(ROOT / "scripts"))
 
-    from download_stroke_data import parse_ranking, parse_stroke_data, RANKING_FILE, DB_FILE
+    from download_stroke_data import (
+        HK_FREQ_FILE,
+        parse_ranking,
+        parse_stroke_data,
+        RANKING_FILE,
+        DB_FILE,
+    )
     from stroke_input.data.serializer import save_msgpack
 
-    rankings = parse_ranking(RANKING_FILE)
+    if HK_FREQ_FILE.exists():
+        import json
+
+        rankings = json.loads(HK_FREQ_FILE.read_text(encoding="utf-8"))
+        print(f"  Using merged HK frequencies ({len(rankings)} chars)")
+    else:
+        rankings = parse_ranking(RANKING_FILE)
+        print(f"  Using fallback rankings ({len(rankings)} chars)")
     records = parse_stroke_data(raw_file, rankings)
     save_msgpack(records, DB_FILE)
     print(f"  Built {len(records):,} records")

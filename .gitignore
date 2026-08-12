@@ -11,3 +11,4 @@ build/
 .kiro/
 *.zip
 stroke-input-extension.zip
+data/external_freq/
