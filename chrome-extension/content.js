@@ -16,14 +16,6 @@
     Numpad5: 5,
     Numpad6: 6,
   };
-  const CN_PUNCTUATION = {
-    ",": "，",
-    ".": "。",
-    "?": "？",
-    "!": "！",
-    ";": "；",
-    ":": "：",
-  };
   const PAGE_SIZE = 9;
   const DEFAULT_SETTINGS = Object.freeze({
     toggleKey: "`",
@@ -47,6 +39,7 @@
   if (!Engine) {
     console.error("[筆畫] StrokeInputEngine missing — is engine.js loaded?");
   }
+  const CN_PUNCTUATION = (Engine && Engine.CN_PUNCTUATION) || {};
 
   // Max rank history per (strokeSeqKey, char)
   const MAX_RANK_HISTORY = 20;

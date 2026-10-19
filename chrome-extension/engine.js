@@ -42,6 +42,30 @@
   const BEAM_DEPTH = 3;
   const BEAM_MIN_PROB = 1e-5;
   const BEAM_MAX_RESULTS = 9;
+
+  /**
+   * ASCII key → Chinese punctuation when the stroke buffer is empty.
+   * Bracket pairs follow common Traditional Chinese IME layouts.
+   */
+  const CN_PUNCTUATION = Object.freeze({
+    ",": "，",
+    ".": "。",
+    "?": "？",
+    "!": "！",
+    ";": "；",
+    ":": "：",
+    "[": "「",
+    "]": "」",
+    "{": "『",
+    "}": "』",
+    "<": "《",
+    ">": "》",
+    "(": "（",
+    ")": "）",
+    "/": "、",
+    "\\": "、",
+    "~": "～",
+  });
   /** Cap scored prefix results to keep first-stroke latency bounded (T3.3). */
   const SEARCH_RESULT_CAP = 200;
   const WILDCARD_RE_CACHE_MAX = 256;
@@ -582,6 +606,7 @@
     BEAM_MIN_PROB,
     BEAM_MAX_RESULTS,
     SEARCH_RESULT_CAP,
+    CN_PUNCTUATION,
     setConfig,
     getConfig,
     computeScore,
