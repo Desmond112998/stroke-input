@@ -351,3 +351,26 @@ describe("StrokeInputEngine.pins affect position score", () => {
     assert.ok(pinned > unpinned);
   });
 });
+
+describe("StrokeInputEngine.CN_PUNCTUATION", () => {
+  it("maps common ASCII keys to Chinese punctuation including corner quotes", () => {
+    const p = Engine.CN_PUNCTUATION;
+    assert.equal(p[","], "，");
+    assert.equal(p["."], "。");
+    assert.equal(p["?"], "？");
+    assert.equal(p["!"], "！");
+    assert.equal(p[";"], "；");
+    assert.equal(p[":"], "：");
+    assert.equal(p["["], "「");
+    assert.equal(p["]"], "」");
+    assert.equal(p["{"], "『");
+    assert.equal(p["}"], "』");
+    assert.equal(p["<"], "《");
+    assert.equal(p[">"], "》");
+    assert.equal(p["("], "（");
+    assert.equal(p[")"], "）");
+    assert.equal(p["/"], "、");
+    assert.equal(p["\\"], "、");
+    assert.equal(p["~"], "～");
+  });
+});

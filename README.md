@@ -47,7 +47,7 @@ The primary interface is a Chrome extension that works in any text field on any 
 | Shift | Toggle Chinese / English mode |
 | J / K / L / U / I / O | Enter strokes (only when a text field is focused; never with Ctrl/Cmd/Alt) |
 | Numpad 1–6 | Same strokes when「數字鍵盤輸入筆畫」is enabled in options |
-| `,` `.` `?` `!` `;` `:` | Full-width Chinese punctuation when buffer is empty (option; default on) |
+| `,` `.` `?` `!` `;` `:` `[` `]` `{` `}` `<` `>` `(` `)` `/` `\` `~` | Chinese punctuation when buffer is empty (option; default on), e.g. 「」《》、 |
 | 1–9 | Select candidate or phrase |
 | ◀ / ▶ | Highlight prev/next candidate |
 | ▲ / ▼ | Previous / next page |
